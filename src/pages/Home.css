@@ -534,9 +534,12 @@
   }
 
   .hero-description {
-    font-size: 1rem;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    font-size: 1.1rem;
+    /* Increased from 1rem */
+    line-height: 1.6;
+    -webkit-line-clamp: 4;
+    /* Show more text on mobile if possible */
+    line-clamp: 4;
     /* 2 lines max */
   }
 
@@ -677,15 +680,19 @@
 
   /* Stack horizontal on mobile, shrink size to fit */
   .action-btn-responsive {
-    font-size: 0.7rem !important;
-    padding: 8px 10px !important;
-    gap: 5px !important;
+    font-size: 1rem !important;
+    /* Increased from 0.7rem */
+    padding: 12px 20px !important;
+    /* Increased padding */
+    gap: 8px !important;
     min-width: auto !important;
+    font-weight: 700 !important;
   }
 
   .action-btn-responsive svg {
-    width: 14px !important;
-    height: 14px !important;
+    width: 20px !important;
+    /* Increased icon size */
+    height: 20px !important;
   }
 
   /* Episode List Padding for Mobile - Increased as requested */
@@ -719,9 +726,10 @@
     /* Shrink stats text */
   }
 
-  padding: 10px 15px !important;
-  font-size: 0.8rem !important;
-}
+  .profile-nav-responsive button {
+    padding: 10px 15px !important;
+    font-size: 0.8rem !important;
+  }
 }
 
 /* Global Reset for Titles */
