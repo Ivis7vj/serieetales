@@ -45,9 +45,8 @@ export const useStoryGenerator = () => {
                     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
                         try {
                             await navigator.share({
-                                files: [file],
-                                // title: 'Review', // Often ignored by mobile OS for image shares
-                                // text: `Review for ${movieName}`,
+                                files: [file]
+                                // text/title removed to force "Story/Image" mode behavior on most devices
                             });
                             setIsGenerating(false);
                             resolve({ success: true, method: 'share', url });
