@@ -78,7 +78,7 @@ const Header = ({ onLogout }) => {
         };
     }, [isSearchActive]);
 
-    const TMDB_API_KEY = '05587a49bd4890a9630d6c0e544e0f6f';
+    const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
     const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
     useEffect(() => {
