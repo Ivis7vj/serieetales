@@ -1553,7 +1553,7 @@ const MovieDetails = () => {
                                                         e.stopPropagation();
                                                         openEpisodeReview(ep);
                                                     }}
-                                                    className="btn-secondary"
+                                                    className="btn-secondary episode-review-btn-mobile"
                                                     style={{
                                                         background: 'transparent',
                                                         color: '#46d369',

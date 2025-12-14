@@ -64,7 +64,7 @@ const Home = () => {
     if (!series) return null;
     return (
       <div className="series-card-container" style={{ paddingTop: '25px', paddingLeft: '25px', transition: 'padding 0.3s' }}>
-        <Link to={`/tv/${series.id}`} className="series-card" style={{ position: 'relative', overflow: 'visible' }}>
+        <Link to={`/tv/${series.id}`} className="series-card" style={{ position: 'relative', overflow: 'visible', textDecoration: 'none', color: 'inherit' }}>
           {starSeriesIds.has(series.id) && <PosterBadge />}
           <img
             className="series-poster"
