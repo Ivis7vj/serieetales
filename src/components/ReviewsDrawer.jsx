@@ -173,17 +173,9 @@ const ReviewsDrawer = ({ isOpen, onClose, reviews, onDelete, onShare, onLike, on
                                                 fontWeight: '900', padding: '2px 6px', borderRadius: '4px',
                                                 border: '1px solid #555'
                                             }}>
-                                                Season {review.seasonNumber}
+                                                S{review.seasonNumber}
                                             </span>
-                                        ) : (
-                                            <span style={{
-                                                background: '#333', color: '#fff', fontSize: '0.75rem',
-                                                fontWeight: '900', padding: '2px 6px', borderRadius: '4px',
-                                                border: '1px solid #555'
-                                            }}>
-                                                (Whole Series)
-                                            </span>
-                                        )}
+                                        ) : null}
                                     </div>
                                     <div style={{ fontSize: '0.8rem', color: '#888', fontWeight: '500' }}>
                                         {review.date ? new Date(review.date).toLocaleDateString() : ''}
