@@ -167,7 +167,7 @@ const ReviewsDrawer = ({ isOpen, onClose, reviews, onDelete, onShare, onLike, on
                                             }}>
                                                 EP{review.episodeNumber}
                                             </span>
-                                        ) : review.isSeason && review.seasonNumber ? (
+                                        ) : (!review.isEpisode && review.seasonNumber) ? (
                                             <span style={{
                                                 background: '#333', color: '#fff', fontSize: '0.75rem',
                                                 fontWeight: '900', padding: '2px 6px', borderRadius: '4px',
@@ -221,24 +221,7 @@ const ReviewsDrawer = ({ isOpen, onClose, reviews, onDelete, onShare, onLike, on
                                 {review.source === 'app' && (
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', borderTop: '1px solid #333', paddingTop: '10px', marginTop: '10px', alignItems: 'center' }}>
 
-                                        {/* Like Button */}
-                                        <button
-                                            onClick={() => onLike && onLike(review.id)}
-                                            style={{
-                                                background: 'transparent',
-                                                border: 'none',
-                                                color: review.isLiked ? '#FFCC00' : '#aaa',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '5px',
-                                                fontSize: '0.9rem'
-                                            }}
-                                            title="Like"
-                                        >
-                                            {review.isLiked ? <MdFavorite size={18} /> : <MdFavoriteBorder size={18} />}
-                                            {review.likes?.length > 0 && <span>{review.likes.length}</span>}
-                                        </button>
+
 
                                         {/* Share Button - Only Owner? User requested "remove share button for another user review" -> Only Owner or maybe Hidden? 
                                             Interpretation: Only show share if it's YOUR review, or maybe removed entirely for non-owners. 

@@ -1624,43 +1624,7 @@ const MovieDetails = () => {
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {/* Season Action Buttons */}
-                        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-                            <button
-                                className="action-button icon-only"
-                                onClick={() => handleAction(async () => {
-                                    if (!(await checkAuth())) return;
-                                    toggleWatched();
-                                })}
-                                title={isWatched ? "Remove from Watched" : "Mark as Watched"}
-                            >
-                                {isWatched ? <MdVisibilityOff /> : <MdVisibility />}
-                            </button>
 
-                            {/* Season Review Button */}
-                            <button
-                                className="action-button icon-only"
-                                onClick={() => handleSeasonReview(selectedSeason)}
-                                title={userSeasonReview ? "Edit Season Review" : "Review Season"}
-                                style={{ color: userSeasonReview ? 'var(--accent-color)' : 'inherit' }}
-                            >
-                                <MdRateReview />
-                            </button>
-
-                            {/* Share Season Button - Only if Reviewed */}
-                            {userSeasonReview && (
-                                <button
-                                    className="action-button icon-only"
-                                    onClick={() => handleShare(userSeasonReview, false, true)}
-                                    title="Share Season Review"
-                                >
-                                    <MdIosShare />
-                                </button>
-                            )}
-
-                            <button className="action-button icon-only" onClick={() => setShareModal({ isOpen: true, imageUrl: `https://image.tmdb.org/t/p/w500${seasonDetails?.poster_path || details.poster_path}` })} title="Share Poster">
-                                <MdShare />
-                            </button>
-                        </div>
                         {episodes.map(ep => {
                             const epReviews = reviewsData.filter(r => r.tmdbId === parseInt(id) && r.seasonNumber === selectedSeason && r.episodeNumber === ep.episode_number && r.isEpisode);
                             const epCount = epReviews.length;
