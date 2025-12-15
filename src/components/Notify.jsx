@@ -48,6 +48,17 @@ const Notify = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [showDropdown]);
 
+    // Auto-Clear Notifications on Close (Optimized)
+    const prevShowDropdown = useRef(false);
+    useEffect(() => {
+        if (currentUser && prevShowDropdown.current && !showDropdown && notifications.length > 0) {
+            // Close Transition: User saw notifications, now clearing.
+            const userRef = doc(db, 'users', currentUser.uid);
+            updateDoc(userRef, { notifications: [] }).catch(e => console.error("Error clearing notifications", e));
+        }
+        prevShowDropdown.current = showDropdown;
+    }, [showDropdown, notifications, currentUser]);
+
     const handleDismiss = async (notification) => {
         if (!currentUser) return;
         try {

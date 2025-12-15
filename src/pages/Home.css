@@ -38,7 +38,7 @@
 }
 
 .logo {
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 400;
   /* Anton is naturally bold */
   color: var(--accent-color);
@@ -328,12 +328,15 @@
 }
 
 .section-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 15px;
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: #fff;
+  margin-bottom: 20px;
   display: flex;
   align-items: center;
+  font-family: 'Anton', 'Impact', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .series-row {
@@ -384,12 +387,12 @@
 
 .series-poster {
   width: 100%;
-  aspect-ratio: 16/9;
+  aspect-ratio: 2/3;
   /* Landscape ratio */
   object-fit: cover;
-  border-radius: 0px;
+  border-radius: 8px;
   /* Square Border */
-  border: 1px solid #333;
+  border: none;
   /* Visual Border */
   display: block;
 }
@@ -447,7 +450,7 @@
 
 /* Responsive */
 .series-card-container {
-  width: 280px;
+  width: 200px;
   flex: 0 0 auto;
   transition: width 0.3s;
 }
@@ -574,8 +577,8 @@
   }
 
   .series-card-container {
-    width: 70vw;
-    /* 70% of viewport width - Large Posters */
+    width: 150px;
+    /* Vertical Mobile */
   }
 
   .section {
@@ -757,7 +760,90 @@
 }
 
 /* Global Reset for Titles */
-a {
-  text-decoration: none;
-  color: inherit;
+/* --- Hero Vertical Design --- */
+.home-scroller {
+  width: 100%;
+  background: #000;
+  padding-bottom: 50px;
+  overflow-x: hidden;
+}
+
+.hero-vertical-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 30px;
+  padding-bottom: 20px;
+  background: #000;
+  text-align: center;
+  min-height: auto;
+}
+
+.hero-text-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 15px;
+  z-index: 10;
+}
+
+.hero-title-primary {
+  font-size: 4rem;
+  /* Medium Large */
+  font-family: 'Anton', 'Impact', sans-serif;
+  color: #fff;
+  line-height: 0.9;
+  text-transform: uppercase;
+  margin: 0;
+  letter-spacing: 1px;
+}
+
+.hero-title-gradient {
+  font-size: 4rem;
+  /* Medium Large */
+  font-family: 'Anton', 'Impact', sans-serif;
+  line-height: 0.9;
+  text-transform: uppercase;
+  margin: 0;
+  letter-spacing: 1px;
+}
+
+.hero-title-gradient.blue {
+  background: linear-gradient(to right, #4f46e5, #3b82f6);
+  background-clip: text;
+  /* Standard */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #3b82f6;
+  /* Fallback */
+}
+
+.hero-title-gradient.pink {
+  background: linear-gradient(to right, #ec4899, #d946ef);
+  background-clip: text;
+  /* Standard */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #ec4899;
+  /* Fallback */
+}
+
+.hero-desc-vertical {
+  display: none;
+}
+
+.hero-btn-tutorial {
+  display: none;
+}
+
+/* Responsive Font Sizes */
+@media (max-width: 768px) {
+
+  .hero-title-primary,
+  .hero-title-gradient {
+    font-size: 3rem;
+    /* Medium Large Mobile */
+  }
 }

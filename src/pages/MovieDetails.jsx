@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { MdStar, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied } from 'react-icons/md';
+import { MdStar, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken } from 'react-icons/md';
 import { FaArrowLeft } from 'react-icons/fa';
 import ReviewsDrawer from '../components/ReviewsDrawer';
 import ReviewModal from '../components/ReviewModal';
@@ -11,8 +11,9 @@ import ShareModal from '../components/ShareModal';
 import { useStoryGenerator } from '../hooks/useStoryGenerator';
 import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../firebase-config'; // Ensure db is exported from firebase-config
+import { db } from '../firebase-config';
 import { doc, deleteDoc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc, query, where, getDocs, orderBy, onSnapshot } from 'firebase/firestore';
+import gsap from 'gsap';
 import './Home.css';
 
 const MovieDetails = () => {
@@ -32,6 +33,57 @@ const MovieDetails = () => {
     const [loading, setLoading] = useState(true);
     const [inWatchlist, setInWatchlist] = useState(false);
     const [isLiked, setIsLiked] = useState(false);
+
+    // Animation Ref
+    const heartRef = useRef(null);
+    const brokenHeartRef = useRef(null);
+
+    // Double Tap Logic
+    let lastTap = 0;
+    const handlePosterClick = (e) => {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap;
+        if (tapLength < 300 && tapLength > 0) {
+            handlePosterDoubleTap(e);
+        }
+        lastTap = currentTime;
+    };
+
+    const handlePosterDoubleTap = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!(await checkAuth())) return;
+
+        const wasLiked = isLiked; // Capture state BEFORE toggle
+
+        // Trigger Like Logic
+        toggleLike();
+
+        // GSAP Animation
+        const targetRef = wasLiked ? brokenHeartRef : heartRef;
+        const scaleVal = 1.0; // "Medium Small" (Reduced from 2.5)
+
+        if (targetRef.current) {
+            const tl = gsap.timeline();
+            if (!wasLiked) {
+                // LIKE ANIMATION (Pop)
+                tl.fromTo(targetRef.current,
+                    { scale: 0, opacity: 0, rotation: -45 },
+                    { scale: scaleVal, opacity: 1, rotation: 0, duration: 0.5, ease: "elastic.out(1, 0.3)" }
+                )
+                    .to(targetRef.current, { scale: 0, opacity: 0, duration: 0.3, delay: 0.2, ease: "power2.in" });
+            } else {
+                // UNLIKE ANIMATION (Break)
+                tl.fromTo(targetRef.current,
+                    { scale: 0, opacity: 0, rotation: 0 },
+                    { scale: scaleVal, opacity: 1, rotation: 0, duration: 0.4, ease: "back.out(1.7)" }
+                )
+                    .to(targetRef.current, { rotation: -15, duration: 0.1, yoyo: true, repeat: 3 }) // Shake
+                    .to(targetRef.current, { scale: 0, opacity: 0, y: 50, duration: 0.4, ease: "power2.in" }); // Drop
+            }
+        }
+    };
 
 
 
@@ -1239,12 +1291,38 @@ const MovieDetails = () => {
 
                 {/* POSTER (Square Borders) */}
                 <div className="poster-wrapper" style={{ flexShrink: 0, zIndex: 3, marginBottom: '2rem' }}>
-                    <div style={{ position: 'relative', filter: 'drop-shadow(0 0 30px rgba(0,0,0,0.6))', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div
+                        onClick={handlePosterClick}
+                        style={{ position: 'relative', filter: 'drop-shadow(0 0 30px rgba(0,0,0,0.6))', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}
+                    >
                         {/* Watchlist Button Overlay */}
 
 
                         {/* Star Badge if Earned (Prioritize Star Badge over just Review, or show Star Badge if user has it) */}
                         {hasStarBadge && <PosterBadge />}
+
+                        {/* Animated Heart */}
+                        <div style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            zIndex: 10,
+                            pointerEvents: 'none' // Click through
+                        }}>
+                            <MdFavorite
+                                ref={heartRef}
+                                size={120}
+                                color="#FF0000"
+                                style={{ opacity: 0, position: 'absolute', transform: 'translate(-50%, -50%)' }}
+                            />
+                            <MdHeartBroken
+                                ref={brokenHeartRef}
+                                size={120}
+                                color="#FFFFFF"
+                                style={{ opacity: 0, position: 'absolute', transform: 'translate(-50%, -50%)' }}
+                            />
+                        </div>
 
                         <img
                             src={posterUrl}
@@ -1401,35 +1479,7 @@ const MovieDetails = () => {
                             </button>
                         )}
 
-                        {/* LIKE */}
-                        <button
-                            className="action-btn-responsive"
-                            onClick={() => handleAction(async () => {
-                                if (!(await checkAuth())) return;
-                                toggleLike();
-                            })}
-                            style={{
-                                background: isLiked ? '#fff' : '#FFCC00',
-                                color: '#000',
-                                border: `2px solid ${isLiked ? '#fff' : '#FFCC00'}`,
-                                padding: '12px 30px',
-                                fontSize: '1.1rem',
-                                fontWeight: '900',
-                                cursor: 'pointer',
-                                textTransform: 'uppercase',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                borderRadius: '0px',
-                                outline: 'none',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                zIndex: 1,
-                                transition: 'all 0.3s ease'
-                            }}
-                        >
-                            {isLiked ? <MdFavorite size={20} /> : <MdFavoriteBorder size={20} />} LIKE
-                        </button>
+
 
                         {/* SEASON REVIEW REMOVED */}
 
@@ -1568,30 +1618,7 @@ const MovieDetails = () => {
                                         />
                                     </button>
 
-                                    {/* RATE SEASON BUTTON */}
-                                    <button
-                                        onClick={() => handleSeasonReview(selectedSeason)}
-                                        style={{
-                                            background: userSeasonReview ? '#fff' : '#333',
-                                            color: userSeasonReview ? '#000' : '#fff',
-                                            border: '1px solid #333',
-                                            padding: '8px 16px',
-                                            borderRadius: '4px',
-                                            fontSize: '0.9rem',
-                                            cursor: 'pointer',
-                                            fontWeight: 'bold',
-                                            textTransform: 'uppercase',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            height: '40px',
-                                            marginLeft: '10px'
-                                        }}
-                                        title={`Review Season ${selectedSeason}`}
-                                    >
-                                        <MdRateReview size={18} />
-                                        {userSeasonReview ? `Rated (${userSeasonReview.rating})` : 'Rate Season'}
-                                    </button>
+
 
                                     {/* Dropdown / Overlay */}
                                     <div

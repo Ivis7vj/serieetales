@@ -230,14 +230,59 @@ const Profile = () => {
                 // Follow
                 await updateDoc(myRef, { following: arrayUnion(targetUid) });
 
-                // Add Notification
-                const notifMsg = `hey serier ${currentUser.username || 'User'} followed you !`;
-                const notifObj = { message: notifMsg, type: 'follow', from: currentUser.uid, timestamp: new Date().toISOString() };
+                // Notification Logic (Aggregated)
+                const targetDoc = await getDoc(targetRef);
+                if (targetDoc.exists()) {
+                    const data = targetDoc.data();
+                    const currentNotifs = data.notifications || [];
 
-                await updateDoc(targetRef, {
-                    followers: arrayUnion(currentUser.uid),
-                    notifications: arrayUnion(notifObj)
-                });
+                    // Check for existing "new follower" notification
+                    const existingFollowIndex = currentNotifs.findIndex(n => n.type === 'follow');
+
+                    if (existingFollowIndex !== -1) {
+                        // Aggregate
+                        const existing = currentNotifs[existingFollowIndex];
+                        let count = 1; // Default if plain message
+                        // Match "follower(N)" pattern
+                        const match = existing.message && existing.message.match(/follower\((\d+)\)/);
+                        if (match) {
+                            count = parseInt(match[1]);
+                        }
+
+                        const newCount = count + 1;
+                        const newMessage = `HEY SERIEER, new follower(${newCount}) for you !`;
+
+                        // Update the existing item
+                        const updatedNotif = {
+                            ...existing,
+                            message: newMessage,
+                            timestamp: new Date().toISOString(),
+                            from: 'multiple' // or keep last sender
+                        };
+
+                        // Replace in array
+                        const newNotifs = [...currentNotifs];
+                        newNotifs[existingFollowIndex] = updatedNotif;
+
+                        await updateDoc(targetRef, {
+                            followers: arrayUnion(currentUser.uid),
+                            notifications: newNotifs
+                        });
+
+                    } else {
+                        // Create New
+                        const notifMsg = `HEY SERIEER , new follower for you!`;
+                        const notifObj = { message: notifMsg, type: 'follow', from: currentUser.uid, timestamp: new Date().toISOString() };
+
+                        await updateDoc(targetRef, {
+                            followers: arrayUnion(currentUser.uid),
+                            notifications: arrayUnion(notifObj)
+                        });
+                    }
+                } else {
+                    // Just add follower if issue reading
+                    await updateDoc(targetRef, { followers: arrayUnion(currentUser.uid) });
+                }
                 setIsFollowing(true);
             }
         } catch (error) {

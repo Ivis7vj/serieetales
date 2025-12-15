@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MdStarBorder } from 'react-icons/md';
+import { MdStarBorder, MdPlayArrow } from 'react-icons/md';
 import { TbTrendingUp } from 'react-icons/tb';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -17,6 +17,18 @@ const Home = () => {
   const [starSeriesIds, setStarSeriesIds] = useState(new Set());
   const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || '05587a49bd4890a9630d6c0e544e0f6f';
   const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+
+  // Hero Carousel State
+  const [heroIndex, setHeroIndex] = useState(0);
+
+  // Auto Swipe Hero
+  useEffect(() => {
+    if (trendingSeries.length === 0) return;
+    const interval = setInterval(() => {
+      setHeroIndex(prev => (prev + 1) % trendingSeries.length);
+    }, 3000); // 3 Seconds
+    return () => clearInterval(interval);
+  }, [trendingSeries]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -68,7 +80,7 @@ const Home = () => {
           {starSeriesIds.has(series.id) && <PosterBadge />}
           <img
             className="series-poster"
-            src={series.backdrop_path || series.poster_path ? `https://image.tmdb.org/t/p/w500${series.backdrop_path || series.poster_path}` : 'https://via.placeholder.com/280x157/141414/FFFF00?text=No+Image'}
+            src={series.poster_path ? `https://image.tmdb.org/t/p/w500${series.poster_path}` : (series.backdrop_path ? `https://image.tmdb.org/t/p/w500${series.backdrop_path}` : 'https://via.placeholder.com/200x300/141414/FFFF00?text=No+Image')}
             alt={series.name}
             draggable={false} // Prevent ghost dragging
             style={{
@@ -76,15 +88,15 @@ const Home = () => {
               zIndex: 1,
               display: 'block',
               width: '100%',
-              // Force 16:9 Aspect Ratio to match Trending layout
-              aspectRatio: '16/9',
-              height: 'auto', // Allow height to derive from width + AR
+              // Force Vertical Aspect Ratio
+              aspectRatio: '2/3',
+              height: 'auto',
               objectFit: 'cover',
               borderRadius: '8px',
               userSelect: 'none' // Disable selection
             }}
             onError={(e) => {
-              e.target.src = `https://via.placeholder.com/280x157/141414/FFFF00?text=${series.name}`;
+              e.target.src = `https://via.placeholder.com/200x300/141414/FFFF00?text=${series.name}`;
             }}
           />
           <div className="series-info">
@@ -102,7 +114,22 @@ const Home = () => {
       {loading ? (
         <div className="loading">Loading...</div>
       ) : (
-        <>
+        <div className="home-scroller">
+          {/* HERO SPLIT SECTION */}
+          {/* HERO VERTICAL SECTION */}
+          <div className="hero-vertical-section">
+            {/* TEXT STACK (Top) */}
+            {/* TEXT STACK (Top) */}
+            <div className="hero-text-stack">
+              <h1 className="hero-title-primary">FIND MOVIES</h1>
+              <h1 className="hero-title-gradient blue">TV SHOWS</h1>
+              <h1 className="hero-title-gradient pink">AND MORE</h1>
+            </div>
+
+            {/* POSTER (Bottom) */}
+            {/* POSTER REMOVED */}
+          </div>
+
           {/* Trending Series Section */}
           <section className="section">
             <h2 className="section-title">
@@ -138,7 +165,7 @@ const Home = () => {
               ))}
             </div>
           </section>
-        </>
+        </div>
       )}
     </>
   );
