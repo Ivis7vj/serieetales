@@ -100,45 +100,49 @@ const Notify = () => {
             {showDropdown && (
                 <div className="notify-dropdown" style={{
                     position: 'absolute',
-                    top: '140%', // pushed down a bit more
-                    left: '0', // Align left edge
-                    transform: 'none',
-                    width: '280px', // slightly clearer width
-                    background: '#1a1a1a',
+                    top: '140%',
+                    left: '-20px', // Align closer to left edge to prevent cutoff
+                    width: '280px', // Slightly narrower
+                    background: '#000', // PURE BLACK
                     border: '1px solid #333',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                    zIndex: 1000,
+                    borderRadius: '0px', // Square design
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.8)',
+                    zIndex: 2000,
                     maxHeight: '400px',
                     overflowY: 'auto',
-                    padding: '10px'
+                    padding: '0'
                 }}>
                     <h3 style={{
-                        margin: '0 0 10px 0',
+                        margin: '0',
                         fontSize: '1rem',
                         borderBottom: '1px solid #333',
-                        paddingBottom: '5px',
-                        color: 'var(--text-primary)'
+                        padding: '15px',
+                        color: '#fff',
+                        fontWeight: '900',
+                        textTransform: 'uppercase',
+                        letterSpacing: '1px'
                     }}>
                         Notifications
                     </h3>
 
                     {notifications.length === 0 ? (
-                        <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: '0.9rem' }}>
-                            No new notifications
+                        <div style={{ padding: '30px', textAlign: 'center', color: '#666', fontSize: '0.9rem', fontWeight: 'bold' }}>
+                            NO NEW NOTIFICATIONS
                         </div>
                     ) : (
                         notifications.map((notif, index) => (
                             <div key={index} style={{
-                                padding: '10px',
-                                borderBottom: '1px solid #333',
+                                padding: '15px',
+                                borderBottom: '1px solid #222',
                                 display: 'flex',
-                                alignItems: 'start',
-                                gap: '10px',
-                                color: '#eee',
-                                fontSize: '0.9rem'
+                                alignItems: 'center',
+                                gap: '15px',
+                                color: '#fff', // White text
+                                fontSize: '0.95rem',
+                                fontWeight: 'bold', // Bold text
+                                background: '#000'
                             }}>
-                                <div style={{ flex: 1 }}>
+                                <div style={{ flex: 1, lineHeight: '1.4' }}>
                                     {typeof notif === 'string' ? notif : notif.message}
                                 </div>
                                 <button
@@ -146,10 +150,11 @@ const Notify = () => {
                                     style={{
                                         background: 'transparent',
                                         border: 'none',
-                                        color: '#666',
+                                        color: '#444',
                                         cursor: 'pointer',
-                                        fontSize: '1.2rem',
-                                        padding: '0 5px'
+                                        fontSize: '1.5rem',
+                                        padding: '0 5px',
+                                        display: 'flex', alignItems: 'center'
                                     }}
                                 >
                                     &times;

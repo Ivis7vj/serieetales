@@ -229,11 +229,24 @@ const Profile = () => {
             } else {
                 // Follow
                 await updateDoc(myRef, { following: arrayUnion(targetUid) });
-                await updateDoc(targetRef, { followers: arrayUnion(currentUser.uid) });
+
+                // Add Notification
+                const notifMsg = `hey serier ${currentUser.username || 'User'} followed you !`;
+                const notifObj = { message: notifMsg, type: 'follow', from: currentUser.uid, timestamp: new Date().toISOString() };
+
+                await updateDoc(targetRef, {
+                    followers: arrayUnion(currentUser.uid),
+                    notifications: arrayUnion(notifObj)
+                });
                 setIsFollowing(true);
             }
         } catch (error) {
             console.error("Error toggling follow:", error);
+            if (error.code === 'permission-denied') {
+                alert("Permission Denied: Unable to update follower stats. Please check Firestore Security Rules to allow updating 'followers' array for other users.", "Backend Error");
+            } else {
+                alert("Failed to update follow status.", "Error");
+            }
         }
     };
 
@@ -788,26 +801,70 @@ const Profile = () => {
 
                 @media (max-width: 768px) {
                     .profile-wrapper { width: 95% !important; padding: 1rem !important; }
-                    .collapsible-header-content { flex-direction: column; display: grid; grid-template-columns: auto 1fr; column-gap: 10px; max-height: 500px; }
-                    .profile-avatar-area { grid-column: 1; grid-row: 1; width: 80px; }
-                    .profile-details-area { grid-column: 2; grid-row: 1; justify-content: flex-start; gap: 10px; padding-top: 0; }
-                    .profile-bio { grid-column: 1/3; grid-row: 2; margin-top: 5px; }
-                    .profile-username { font-size: 1.4rem; }
                     
-                    .diary-item { width: 140px; } /* Mobile diary size */
-                    .activity-poster-wrapper { width: 80px; } /* Mobile activity poster */
+                    /* Mobile Header Grid - 3 Rows */
+                    .collapsible-header-content { 
+                        display: grid; 
+                        grid-template-columns: auto 1fr; 
+                        column-gap: 15px; 
+                        row-gap: 10px; /* Gap between rows */
+                        max-height: 1000px; /* Allow expansion */
+                    }
+
+                    /* 1. Avatar (Top Left) */
+                    .profile-avatar-area { 
+                        grid-column: 1; 
+                        grid-row: 1; 
+                        width: 90px; 
+                        margin-bottom: 0;
+                    }
+
+                    /* Flatten details area to allow children to be grid items */
+                    .profile-details-area { display: contents; }
+
+                    /* 2. Name & Follow Button (Top Right) */
+                    .user-info-row {
+                        grid-column: 2;
+                        grid-row: 1;
+                        align-self: center;
+                        gap: 10px !important;
+                    }
+
+                    /* 3. Stats (Row 2 - Full Width - Space Below) */
+                    .stats-container {
+                        grid-column: 1 / -1;
+                        grid-row: 2;
+                        width: 100%;
+                        justify-content: space-around; /* Even spacing */
+                        margin-top: 15px;
+                        margin-bottom: 15px; /* Space before Bio/Tabs */
+                        padding: 10px 0;
+                        background: rgba(255,255,255,0.05); /* Subtle separation */
+                        border-radius: 8px;
+                    }
+
+                    /* 4. Bio (Row 3 - Full Width) */
+                    .profile-bio {
+                        grid-column: 1 / -1;
+                        grid-row: 3;
+                        margin-top: 5px;
+                        text-align: center; /* Center bio on mobile */
+                    }
+
+                    .profile-username { font-size: 1.5rem; }
+                    
+                    .diary-item { width: 140px; } 
+                    .activity-poster-wrapper { width: 80px; }
                     .activity-title { font-size: 1rem; }
                     
-                    .stats-container { width: 100%; justify-content: space-between; gap: 5px; }
-                    .favorites-grid { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 10px; }
+                    .favorites-grid { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 20px; scroll-interval: 150px; }
                     .favorite-box { width: 110px; }
                     .pfp-full-img-container { width: 90vw !important; height: 90vw !important; }
 
-                    /* Watchlist Grid - 4 Columns on Mobile */
+                    /* Watchlist Grid - 3 Columns on Mobile for better view */
                     .watchlist-grid {
                         grid-template-columns: repeat(3, 1fr);
-                        grid-template-columns: repeat(4, 1fr);
-                        gap: 5px;
+                        gap: 8px;
                     }
 
                     .profile-actions-animated { top: 10px; right: 0; }
@@ -882,7 +939,19 @@ const Profile = () => {
                         </div>
                     </div>
                     <div className="profile-details-area">
-                        <h1 className="profile-username">{user.username || 'User'}</h1>
+                        <div className="user-info-row" style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                            <h1 className="profile-username">{user.username || 'User'}</h1>
+                            {!isOwnProfile && (
+                                <button
+                                    onClick={handleFollowToggle}
+                                    className={`follow-btn ${isFollowing ? 'following' : 'not-following'}`}
+                                    style={{ fontSize: '0.8rem', padding: '6px 16px' }}
+                                >
+                                    {isFollowing ? 'UNFOLLOW' : 'FOLLOW'}
+                                </button>
+                            )}
+                        </div>
+
                         <div className="stats-container">
                             <div className="stats-div" style={{ textAlign: 'center' }}><div className="stats-number">{stats.thisYear}</div><div className="stats-label">THIS YEAR</div></div>
                             <Link to={`/profile/${targetUid}/followers`} className="stats-div" style={{ textAlign: 'center', textDecoration: 'none', cursor: 'pointer' }}>
@@ -897,28 +966,17 @@ const Profile = () => {
                         {user.bio && <div className="profile-bio">{user.bio}</div>}
                     </div>
                 </div>
-                <div className={`profile-actions-animated ${isCollapsed ? 'collapsed-menu' : ''}`} ref={menuRef}>
-                    {!isOwnProfile && (
-                        <button
-                            onClick={handleFollowToggle}
-                            className={`follow-btn ${isFollowing ? 'following' : 'not-following'}`}
-                        >
-                            {isFollowing ? 'UNFOLLOW' : 'FOLLOW'}
-                        </button>
-                    )}
-
-                    {isOwnProfile && (
-                        <>
-                            <button onClick={() => setShowMenu(!showMenu)} style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1.5rem', padding: '5px' }}><MdMoreVert /></button>
-                            {showMenu && (
-                                <div className="menu-dropdown">
-                                    <label className="menu-item" style={{ cursor: 'pointer' }}>Edit Profile PFP<input type="file" hidden onChange={handleFileSelect} accept="image/*" /></label>
-                                    <button className="menu-item" onClick={() => navigate('/edit-profile')}>Edit Profile Details</button>
-                                </div>
-                            )}
-                        </>
-                    )}
-                </div>
+                {isOwnProfile && (
+                    <div className={`profile-actions-animated ${isCollapsed ? 'collapsed-menu' : ''}`} ref={menuRef}>
+                        <button onClick={() => setShowMenu(!showMenu)} style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1.5rem', padding: '5px' }}><MdMoreVert /></button>
+                        {showMenu && (
+                            <div className="menu-dropdown">
+                                <label className="menu-item" style={{ cursor: 'pointer' }}>Edit Profile PFP<input type="file" hidden onChange={handleFileSelect} accept="image/*" /></label>
+                                <button className="menu-item" onClick={() => navigate('/edit-profile')}>Edit Profile Details</button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <nav className="nav-scroll-container">
