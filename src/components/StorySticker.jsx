@@ -202,7 +202,6 @@ const StorySticker = forwardRef(({ movie, rating, user }, ref) => {
                 </span>
             </div>
         </div>
-        </div >
     );
 });
 
