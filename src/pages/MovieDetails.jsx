@@ -279,6 +279,13 @@ const MovieDetails = () => {
         return seasonEpisodeIds.every(id => watchedEpisodeIds.includes(id));
     };
 
+    const closeStickerModal = () => {
+        setStickerModalOpen(false);
+        setStickerStatus('idle');
+        setGeneratedStickerImage(null);
+        setStickerData(null);
+    };
+
     const handleShare = (reviewItem, isEpisode = false, isSeason = false) => {
         // CRITICAL: Reset cached image to force fresh generation
         setGeneratedStickerImage(null);
