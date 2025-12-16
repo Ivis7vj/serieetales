@@ -153,58 +153,70 @@ const StorySticker = forwardRef(({ movie, rating, user }, ref) => {
                 </div>
             </div>
 
-            {/* TITLE + SEASON/EPISODE */}
+            {/* SERIES TITLE (Below Poster) */}
             <div style={{
-                fontSize: '44px',
-                fontWeight: '700',
+                fontSize: '3rem',
+                fontWeight: '400',
+                textTransform: 'uppercase',
+                fontFamily: "'Anton', 'Impact', sans-serif",
+                letterSpacing: '1px',
+                lineHeight: '0.9',
                 textAlign: 'center',
-                marginBottom: '36px',
-                lineHeight: '1.3',
+                marginBottom: '30px',
                 maxWidth: '900px',
-                color: '#ffffff',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis'
+                color: '#ffffff'
             }}>
                 {movie.name}
-                {movie.seasonEpisode && (
-                    <span style={{
-                        color: '#FFD600',
-                        marginLeft: '16px',
-                        fontWeight: '800'
-                    }}>
-                        {movie.seasonEpisode}
-                    </span>
-                )}
             </div>
 
-            {/* RATING ROW */}
+            {/* SEASON/EPISODE + RATING ROW */}
             <div style={{
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'center',
-                gap: '24px'
+                gap: '20px'
             }}>
-                {/* Stars */}
-                <div style={{ display: 'flex', gap: '6px' }}>
-                    {[...Array(5)].map((_, i) => (
-                        <MdStar
-                            key={i}
-                            size={52}
-                            color={i < starCount ? '#FFD600' : '#333333'}
-                            style={{ filter: i < starCount ? 'drop-shadow(0 0 8px rgba(255, 214, 0, 0.4))' : 'none' }}
-                        />
-                    ))}
-                </div>
-                {/* Text */}
-                <span style={{
-                    fontSize: '36px',
-                    color: 'rgba(255, 255, 255, 0.85)',
-                    fontWeight: '500',
-                    letterSpacing: '0.5px'
+                {/* Season/Episode Label */}
+                {movie.seasonEpisode && (
+                    <div style={{
+                        fontSize: '32px',
+                        fontWeight: '800',
+                        color: '#FFD600',
+                        letterSpacing: '1px'
+                    }}>
+                        {movie.seasonEpisode}
+                    </div>
+                )}
+
+
+                {/* RATING ROW */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '24px'
                 }}>
-                    {username} watched this
-                </span>
+                    {/* Stars */}
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                        {[...Array(5)].map((_, i) => (
+                            <MdStar
+                                key={i}
+                                size={52}
+                                color={i < starCount ? '#FFD600' : '#333333'}
+                                style={{ filter: i < starCount ? 'drop-shadow(0 0 8px rgba(255, 214, 0, 0.4))' : 'none' }}
+                            />
+                        ))}
+                    </div>
+                    {/* Text */}
+                    <span style={{
+                        fontSize: '36px',
+                        color: 'rgba(255, 255, 255, 0.85)',
+                        fontWeight: '500',
+                        letterSpacing: '0.5px'
+                    }}>
+                        {username} watched this
+                    </span>
+                </div>
             </div>
         </div>
     );

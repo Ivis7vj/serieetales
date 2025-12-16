@@ -939,8 +939,8 @@ const Profile = () => {
                 .activity-review-content { background: #111; padding: 15px; border-radius: 6px; color: #ccc; font-size: 0.95rem; line-height: 1.5; margin-top: 10px; position: relative; }
                 .activity-review-content::before { content: ''; position: absolute; left: -6px; top: 15px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-right: 6px solid #111; }
 
-                .pfp-full-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.95); z-index: 5000; display: flex; alignItems: center; justifyContent: center; }
-                .pfp-full-img-container { width: 300px; height: 300px; border-radius: 50%; overflow: hidden; border: 5px solid var(--accent-color); }
+                .pfp-full-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.95); z-index: 5000; display: flex; align-items: center; justify-content: center; }
+                .pfp-full-img-container { width: 280px; height: 280px; border-radius: 50%; overflow: hidden; border: 5px solid var(--accent-color); }
 
                 /* Watchlist Grid Default (Desktop) */
                 .watchlist-grid {
