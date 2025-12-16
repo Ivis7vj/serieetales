@@ -16,6 +16,7 @@ import html2canvas from 'html2canvas';
 import { doc, deleteDoc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc, query, where, getDocs, orderBy, onSnapshot, limit } from 'firebase/firestore';
 
 import { logActivity } from '../utils/activityLogger';
+import { resolvePoster } from '../utils/posterResolution';
 import gsap from 'gsap';
 import './Home.css';
 

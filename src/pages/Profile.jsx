@@ -11,6 +11,8 @@ import { doc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc, 
 import './Home.css';
 
 // Simple Image Cropper Component
+import { resolvePoster } from '../utils/posterResolution';
+
 const ImageCropper = ({ imageSrc, onCancel, onSave }) => {
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [dragging, setDragging] = useState(false);
@@ -588,7 +590,7 @@ const Profile = () => {
                                             {fav ? (
                                                 <>
                                                     <Link to={fav.seasonNumber ? `/tv/${fav.id}/season/${fav.seasonNumber}` : `/tv/${fav.id}`} style={{ display: 'block', width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
-                                                        <img src={`https://image.tmdb.org/t/p/w342${fav.seasonPoster || fav.poster_path}`} alt={fav.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                        <img src={`https://image.tmdb.org/t/p/w342${resolvePoster(user, fav.id, fav.seasonNumber, fav.seasonPoster || fav.poster_path)}`} alt={fav.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
 
                                                     </Link>
                                                     {isOwnProfile && <button onClick={(e) => { e.preventDefault(); handleBoxClick(index); }} using className="edit-fav-btn"><MdCreate /></button>}
