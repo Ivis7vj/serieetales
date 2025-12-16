@@ -374,11 +374,19 @@ const MovieDetails = () => {
         setStickerStatus('idle');
 
         // Resolve Poster Path & Season Info
-        let posterPathToUse = details.poster_path; // Default: Series Poster
         let seasonEpisodeText = null;
 
-        const targetSeasonNum = reviewItem.seasonNumber;
+        const targetSeasonNum = Number(reviewItem.seasonNumber || (isSeason ? seasonNumber : null));
+
+        // Use Global Resolution Utility
+        let posterPathToUse = resolvePoster(userData, details.id, targetSeasonNum, details.poster_path);
+
         const foundSeason = targetSeasonNum ? seasonsValues.find(s => s.season_number === targetSeasonNum) : null;
+
+        // Fallback Logic if resolvePoster returned default but we have a season-specific TMDB poster
+        if (posterPathToUse === details.poster_path && foundSeason && foundSeason.poster_path) {
+            posterPathToUse = foundSeason.poster_path;
+        }
 
         // Try to use Season Poster if available (more specific)
         if (foundSeason && foundSeason.poster_path) {
