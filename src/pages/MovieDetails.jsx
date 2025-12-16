@@ -302,7 +302,11 @@ const MovieDetails = () => {
                 seasonEpisode: seasonEpisodeText
             },
             rating: reviewItem?.rating ? parseFloat(reviewItem.rating) * 2 : 0,
-            user: currentUser,
+            user: {
+                username: userData?.username || 'User',
+                photoURL: currentUser?.photoURL,
+                uid: currentUser?.uid
+            },
             isEpisodes: isEpisode
         });
         setStickerModalOpen(true);

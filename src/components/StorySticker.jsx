@@ -14,10 +14,11 @@ const StorySticker = forwardRef(({ movie, rating, user }, ref) => {
     const pfpUrl = user?.photoURL
         ? `${user.photoURL}?v=${new Date().getTime()}`
         : defaultPfpSvg;
-    const username = user?.displayName || user?.email?.split('@')[0] || 'User';
+    const username = user?.username || 'User';
 
-    // Generate star array based on rating (1-10 scale to 5 stars)
-    const starCount = Math.round((rating / 10) * 5);
+    // Generate star array based on rating (0-10 scale to 5 stars)
+    // User ratings are 0-10, convert to 5-star scale
+    const starCount = Math.round(rating / 2);
 
     return (
         <div
@@ -32,8 +33,8 @@ const StorySticker = forwardRef(({ movie, rating, user }, ref) => {
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'flex-start',
-                padding: '100px 60px',
+                justifyContent: 'center',
+                padding: '80px 60px',
                 boxSizing: 'border-box',
                 position: 'relative'
             }}
@@ -154,13 +155,16 @@ const StorySticker = forwardRef(({ movie, rating, user }, ref) => {
 
             {/* TITLE + SEASON/EPISODE */}
             <div style={{
-                fontSize: '48px',
+                fontSize: '44px',
                 fontWeight: '700',
                 textAlign: 'center',
-                marginBottom: '40px',
-                lineHeight: '1.2',
+                marginBottom: '36px',
+                lineHeight: '1.3',
                 maxWidth: '900px',
-                color: '#ffffff'
+                color: '#ffffff',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
             }}>
                 {movie.name}
                 {movie.seasonEpisode && (

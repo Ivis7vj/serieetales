@@ -14,7 +14,7 @@ import html2canvas from 'html2canvas';
 import './Home.css';
 
 const UserReview = () => {
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth();
     const [reviews, setReviews] = useState([]);
     const [editModal, setEditModal] = useState({ isOpen: false, review: null });
     const [deleteModal, setDeleteModal] = useState({ isOpen: false, reviewId: null, tmdbId: null, isSeries: false });
@@ -107,7 +107,11 @@ const UserReview = () => {
                 seasonEpisode: reviewItem.isEpisode ? `S${reviewItem.seasonNumber} E${reviewItem.episodeNumber}` : (reviewItem.isSeason ? `S${reviewItem.seasonNumber}` : null)
             },
             rating: reviewItem.rating ? parseFloat(reviewItem.rating) * 2 : 0,
-            user: currentUser,
+            user: {
+                username: userData?.username || 'User',
+                photoURL: currentUser?.photoURL,
+                uid: currentUser?.uid
+            },
             isEpisodes: reviewItem.isEpisode
         });
         setStickerModalOpen(true);

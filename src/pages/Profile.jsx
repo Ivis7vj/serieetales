@@ -940,7 +940,7 @@ const Profile = () => {
                 .activity-review-content::before { content: ''; position: absolute; left: -6px; top: 15px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-right: 6px solid #111; }
 
                 .pfp-full-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.95); z-index: 5000; display: flex; alignItems: center; justifyContent: center; }
-                .pfp-full-img-container { width: 500px; height: 500px; border-radius: 50%; overflow: hidden; border: 5px solid var(--accent-color); }
+                .pfp-full-img-container { width: 300px; height: 300px; border-radius: 50%; overflow: hidden; border: 5px solid var(--accent-color); }
 
                 /* Watchlist Grid Default (Desktop) */
                 .watchlist-grid {
@@ -1013,7 +1013,7 @@ const Profile = () => {
                     
                     .favorites-grid { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 20px; scroll-interval: 150px; }
                     .favorite-box { width: 110px; }
-                    .pfp-full-img-container { width: 90vw !important; height: 90vw !important; }
+                    .pfp-full-img-container { width: 70vw !important; height: 70vw !important; max-width: 300px !important; max-height: 300px !important; }
 
                     /* Watchlist Grid - 3 Columns on Mobile for better view */
                     .watchlist-grid {
