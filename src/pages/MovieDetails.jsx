@@ -101,8 +101,6 @@ const MovieDetails = () => {
     const [isWatched, setIsWatched] = useState(false);
     const [showPosterUnlockPopup, setShowPosterUnlockPopup] = useState(false);
     const [posterUnlockData, setPosterUnlockData] = useState(null);
-    const [showPosterUnlockPopup, setShowPosterUnlockPopup] = useState(false);
-    const [posterUnlockData, setPosterUnlockData] = useState(null);
 
     // Review Modal State
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -282,40 +280,6 @@ const MovieDetails = () => {
 
         // Season is complete if all episode IDs are in watched
         return seasonEpisodeIds.every(id => watchedEpisodeIds.includes(id));
-    };
-
-    // Handle season completion flow - unlock posters
-    const handleSeasonCompletedFlow = async (seasonNumber) => {
-        if (!currentUser || !details) return;
-
-        try {
-            const userRef = doc(db, 'users', currentUser.uid);
-            const userSnap = await getDoc(userRef);
-
-            if (!userSnap.exists()) return;
-
-            const data = userSnap.data();
-            const completedKey = String(details.id);
-            const completedSeasons = data.completedSeasons?.[completedKey] || [];
-
-            // Check if already marked as completed
-            if (!completedSeasons.includes(seasonNumber)) {
-                // Mark as completed
-                await updateDoc(userRef, {
-                    [`completedSeasons.${completedKey}`]: arrayUnion(seasonNumber)
-                });
-
-                // Show unlock popup
-                setShowPosterUnlockPopup(true);
-                setPosterUnlockData({
-                    seriesId: details.id,
-                    seasonNumber: seasonNumber,
-                    seriesName: details.name
-                });
-            }
-        } catch (error) {
-            console.error('Error handling season completion:', error);
-        }
     };
 
     // Handle season completion flow - unlock posters
