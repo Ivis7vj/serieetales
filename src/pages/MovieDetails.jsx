@@ -118,13 +118,24 @@ const MovieDetails = () => {
     useEffect(() => {
         if (userData && details && selectedSeason) {
             const completedKey = String(details.id);
-            const isCompleted = userData.completedSeasons?.[completedKey]?.includes(Number(selectedSeason));
+            const completedSeasons = userData.completedSeasons?.[completedKey] || [];
+            const isCompleted = completedSeasons.includes(Number(selectedSeason));
             const selectedPosterKey = `${details.id}_${selectedSeason}`;
             const selectedPoster = userData.selectedPosters?.[selectedPosterKey];
 
+            // DEBUG: Log completion status
+            console.log('🔍 Season Progress Check:', {
+                seriesId: details.id,
+                selectedSeason,
+                completedKey,
+                completedSeasons,
+                isCompleted,
+                hasUserData: !!userData
+            });
+
             setSeasonProgress({
                 completed: !!isCompleted,
-                rated: false, // Updated via userSeasonReview check separately if needed, or ignored for button state
+                rated: false,
                 selectedPoster: selectedPoster
             });
         }
@@ -343,13 +354,24 @@ const MovieDetails = () => {
             const data = userSnap.data();
             const completedKey = String(details.id);
             const completedSeasons = data.completedSeasons?.[completedKey] || [];
+            const seasonNum = Number(seasonNumber); // Ensure it's a number
+
+            console.log('✅ Marking season complete:', {
+                seriesId: details.id,
+                seasonNumber: seasonNum,
+                completedKey,
+                existingCompletedSeasons: completedSeasons,
+                alreadyCompleted: completedSeasons.includes(seasonNum)
+            });
 
             // Check if already marked as completed
-            if (!completedSeasons.includes(seasonNumber)) {
-                // Mark as completed
+            if (!completedSeasons.includes(seasonNum)) {
+                // Mark as completed (ALWAYS store as number)
                 await updateDoc(userRef, {
-                    [`completedSeasons.${completedKey}`]: arrayUnion(seasonNumber)
+                    [`completedSeasons.${completedKey}`]: arrayUnion(seasonNum)
                 });
+
+                console.log('💾 Saved to Firestore:', { completedKey, seasonNum });
 
                 // CRITICAL: Update local state immediately so Edit button appears
                 setSeasonProgress(prev => ({
@@ -945,6 +967,9 @@ const MovieDetails = () => {
                                     date: new Date().toISOString(),
                                     poster_path: details.poster_path
                                 });
+
+                                // CRITICAL: Trigger poster unlock flow!
+                                await handleSeasonCompletedFlow(episode.season_number);
                             }
                         }
                     }
