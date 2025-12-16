@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import html2canvas from 'html2canvas';
 import { doc, deleteDoc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc, query, where, getDocs, orderBy, onSnapshot, limit } from 'firebase/firestore';
+import { getResolvedPoster } from '../utils/posterResolution';
 
 import { logActivity } from '../utils/activityLogger';
 import gsap from 'gsap';
@@ -335,8 +336,15 @@ const MovieDetails = () => {
         const targetSeasonNum = reviewItem.seasonNumber;
         const foundSeason = targetSeasonNum ? seasonsValues.find(s => s.season_number === targetSeasonNum) : null;
 
-        // Try to use Season Poster if available (more specific)
-        if (foundSeason && foundSeason.poster_path) {
+        // Use global poster resolution - check user's selected poster first
+        if (targetSeasonNum) {
+            posterPathToUse = getResolvedPoster(
+                userData,
+                details.id,
+                targetSeasonNum,
+                foundSeason?.poster_path || details.poster_path
+            );
+        } else if (foundSeason && foundSeason.poster_path) {
             posterPathToUse = foundSeason.poster_path;
         } else if (isSeason && seasonDetails?.poster_path) {
             // Fallback to seasonDetails if it matches
