@@ -42,5 +42,7 @@ export const activityService = {
      */
     markActivityViewed: () => {
         localStorage.setItem('last_viewed_friends_activity', Date.now().toString());
+        // Dispatch custom event to notify Sidebar or other components
+        window.dispatchEvent(new CustomEvent('friends-activity-viewed'));
     }
 };

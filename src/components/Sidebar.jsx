@@ -22,8 +22,13 @@ const Sidebar = () => {
         };
 
         checkActivity();
-        // Optional: Poll every minute? Strict requirement says "real content only", doesn't imply real-time socket.
-        // Checking on mount/update is sufficient for "app open" or "nav".
+
+        const handleViewed = () => setHasActivity(false);
+        window.addEventListener('friends-activity-viewed', handleViewed);
+
+        return () => {
+            window.removeEventListener('friends-activity-viewed', handleViewed);
+        };
     }, [userData]);
 
     return (

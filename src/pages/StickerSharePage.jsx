@@ -19,6 +19,18 @@ const StickerSharePage = () => {
 
     const [status, setStatus] = useState('idle'); // idle, preparing, ready
     const [generatedImage, setGeneratedImage] = useState(null);
+    const isMounted = useRef(true);
+    const generateTimeoutRef = useRef(null);
+
+    useEffect(() => {
+        isMounted.current = true;
+        return () => {
+            isMounted.current = false;
+            if (generateTimeoutRef.current) {
+                clearTimeout(generateTimeoutRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (!stickerData) {
@@ -31,10 +43,11 @@ const StickerSharePage = () => {
     const handleGenerate = async () => {
         if (!stickerRef.current) {
             // Wait for ref if not immediately available
-            setTimeout(handleGenerate, 100);
+            generateTimeoutRef.current = setTimeout(handleGenerate, 100);
             return;
         }
 
+        if (!isMounted.current) return;
         setStatus('preparing');
 
         // Wait for images in StorySticker (via data-attributes or natural state)
@@ -68,11 +81,14 @@ const StickerSharePage = () => {
                     margin: '0',
                 }
             });
+            if (!isMounted.current) return;
             setGeneratedImage(dataUrl);
             setStatus('ready');
         } catch (error) {
             console.error("Sticker Generation Error:", error);
-            setStatus('idle');
+            if (isMounted.current) {
+                setStatus('idle');
+            }
         }
     };
 
