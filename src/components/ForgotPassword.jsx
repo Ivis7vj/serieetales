@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-const ForgotPassword = ({ onToggle, onSuccess }) => {
+const ForgotPassword = ({ onToggle }) => {
   const { verifyAndResetPassword } = useAuth();
   const [formData, setFormData] = useState({
     username: '',

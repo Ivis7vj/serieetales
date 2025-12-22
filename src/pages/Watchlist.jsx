@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { MdStarBorder, MdRemoveCircleOutline, MdClose } from 'react-icons/md';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLoading } from '../context/LoadingContext';
 import { db } from '../firebase-config';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import * as watchlistService from '../utils/watchlistService';
 import './Home.css';
 import '../pages/Home.css'; // Ensure CSS is loaded
 
@@ -11,18 +13,17 @@ const Watchlist = () => {
     const { currentUser } = useAuth();
     const [watchlist, setWatchlist] = useState([]);
     const [basketData, setBasketData] = useState(null); // Replaces viewingSeriesId
+    const { stopLoading } = useLoading();
 
     useEffect(() => {
         if (!currentUser) return;
         const fetchWatchlist = async () => {
-            const userRef = doc(db, 'users', currentUser.uid);
-            const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-                setWatchlist(userSnap.data().watchlist || []);
-            }
+            const wl = await watchlistService.getWatchlist(currentUser.uid);
+            setWatchlist(wl);
+            stopLoading();
         };
         fetchWatchlist();
-    }, [currentUser]);
+    }, [currentUser, stopLoading]);
 
     // Profile-style Grouping Logic (Season Baskets)
     const processWatchlist = (list) => {
@@ -31,16 +32,18 @@ const Watchlist = () => {
 
         // 1. Identify Episode Baskets
         list.forEach(item => {
+            const itemId = item.id || item.tmdb_id;
+            const seriesId = item.seriesId || item.series_id || itemId;
             if (item.seasonNumber && item.episodeNumber) {
-                const key = `${item.seriesId || item.id}_S${item.seasonNumber}`;
+                const key = `${seriesId}_S${item.seasonNumber}`;
                 if (!groups[key]) {
                     groups[key] = {
                         type: 'basket',
-                        seriesId: item.seriesId || item.id,
+                        seriesId: seriesId,
                         seasonNumber: item.seasonNumber,
-                        name: item.name, // Will be Series Name usually or Episode Name. We fix name below.
-                        poster_path: item.poster_path, // Series Poster
-                        pluginPoster: item.seasonPoster, // Season Poster (Prioritized)
+                        name: item.name,
+                        poster_path: item.poster_path,
+                        pluginPoster: item.seasonPoster,
                         episodes: []
                     };
                 }
@@ -53,24 +56,27 @@ const Watchlist = () => {
         list.forEach(item => {
             if (item.seasonNumber && item.episodeNumber) return; // Handled
 
-            const basketKey = `${item.seriesId || item.id}_S${item.seasonNumber}`;
+            const tmdbId = item.tmdb_id || item.id;
+            const seriesId = item.seriesId || item.series_id || tmdbId;
+            const basketKey = `${seriesId}_S${item.seasonNumber}`;
             if (item.seasonNumber && groups[basketKey]) return; // Deduplicate: specific season exists as basket
 
-            processed.push({ ...item, type: 'series', isSeason: !!item.seasonNumber });
+            processed.push({
+                ...item,
+                tmdbId: tmdbId,
+                seriesId: seriesId,
+                type: 'series',
+                isSeason: !!item.seasonNumber
+            });
         });
 
         // 3. Add Baskets to Processed
         Object.values(groups).forEach(basket => {
+            basket.tmdbId = basket.seriesId; // Baskets are keyed by seriesId
             basket.episodeCount = basket.episodes.length;
             basket.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
-            // Use season poster logic
             if (basket.pluginPoster) basket.poster_path = basket.pluginPoster;
 
-            // Clean name (remove Episode specific stuff if present)
-            // Ideally we get Series Name. The episode item has `name` as `Series - S1E1: Title`.
-            // We can parse or pass `seriesName` separately in `itemToSave` in MovieDetails. 
-            // In MovieDetails itemToSave: `name: ${details.name} - S...`.
-            // We can split by " - ".
             if (basket.episodes[0]) {
                 const parts = basket.episodes[0].name.split(' - ');
                 basket.name = parts[0] + (basket.seasonNumber ? ` (Season ${basket.seasonNumber})` : '');
@@ -86,16 +92,18 @@ const Watchlist = () => {
         e.preventDefault();
         e.stopPropagation();
         if (!currentUser) return;
-        const updated = watchlist.filter(item => item.id !== id);
+
+        // Optimistic Update
+        const updated = watchlist.filter(item => (item.id || item.tmdb_id) !== id);
         setWatchlist(updated);
+
         try {
-            const userRef = doc(db, 'users', currentUser.uid);
-            await updateDoc(userRef, { watchlist: updated });
+            await watchlistService.removeFromWatchlist(currentUser.uid, id);
         } catch (error) { console.error(error); }
 
         // Close modal if item removed was inside
-        if (basketData && basketData.episodes.some(i => i.id === id)) {
-            const newBasketEps = basketData.episodes.filter(i => i.id !== id);
+        if (basketData && basketData.episodes.some(i => (i.id || i.tmdb_id) === id)) {
+            const newBasketEps = basketData.episodes.filter(i => (i.id || i.tmdb_id) !== id);
             if (newBasketEps.length === 0) setBasketData(null);
             else setBasketData({ ...basketData, episodes: newBasketEps });
         }
@@ -129,7 +137,7 @@ const Watchlist = () => {
                                     </div>
                                 </div>
                             ) : (
-                                <Link to={item.seasonNumber ? `/tv/${item.seriesId || item.id}/season/${item.seasonNumber}` : `/tv/${item.seriesId || item.id}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative' }}>
+                                <Link to={item.seasonNumber ? `/tv/${item.tmdbId}/season/${item.seasonNumber}` : `/tv/${item.tmdbId}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative' }}>
                                     <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                     {item.seasonNumber && !item.episodeNumber && (
                                         <div style={{

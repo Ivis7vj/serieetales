@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import SignUp from '../components/SignUp';
 import SignIn from '../components/SignIn';
 import ForgotPassword from '../components/ForgotPassword';
@@ -7,6 +9,15 @@ import './Login.css';
 const Login = ({ onLogin }) => {
   const [view, setView] = useState('signin');
   const [message, setMessage] = useState('');
+  const { currentUser, loading } = useAuth();
+  const navigate = useNavigate();
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!loading && currentUser) {
+      navigate('/', { replace: true });
+    }
+  }, [currentUser, loading, navigate]);
 
   const handleToggle = (newView) => {
     setView(newView);

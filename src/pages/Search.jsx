@@ -4,9 +4,14 @@ import { MdHistory, MdCheck } from 'react-icons/md';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import { doc, updateDoc } from 'firebase/firestore';
+import { getResolvedPosterUrl } from '../utils/globalPosterResolver';
 
 import './Home.css';
 import './Search.css';
+import { useLoading } from '../context/LoadingContext';
+import { tmdbApi } from '../utils/tmdbApi';
+import PremiumLoader from '../components/PremiumLoader';
+import { triggerErrorAutomation } from '../utils/errorAutomation';
 
 const Search = () => {
     const location = useLocation();
@@ -19,6 +24,7 @@ const Search = () => {
 
     const [results, setResults] = useState([]);
     const [loading, setLoading] = useState(false);
+    const { stopLoading } = useLoading();
 
     // Recent Searches
     const [recentSearches, setRecentSearches] = useState([]);
@@ -32,16 +38,27 @@ const Search = () => {
     const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
     // Auth for unique storage
-    const { currentUser, userData } = useAuth();
+    const { currentUser, userData, globalPosters } = useAuth();
     const storageKey = currentUser ? `recentSearches_${currentUser.uid}` : 'recentSearches_guest';
 
     useEffect(() => {
+        let saved = [];
         try {
-            const savedRecents = JSON.parse(localStorage.getItem(storageKey) || '[]');
-            setRecentSearches(Array.isArray(savedRecents) ? savedRecents : []);
+            const raw = localStorage.getItem(storageKey);
+            if (raw && raw !== "[object Object]") {
+                try {
+                    saved = JSON.parse(raw);
+                    if (!Array.isArray(saved)) saved = [];
+                } catch (parseErr) {
+                    console.error("JSON Parse Error in Search.jsx:", parseErr);
+                    saved = [];
+                }
+            }
         } catch (e) {
-            setRecentSearches([]);
+            console.error("Error accessing localStorage in Search.jsx", e);
+            saved = [];
         }
+        setRecentSearches(saved);
     }, [currentUser, storageKey]);
 
     useEffect(() => {
@@ -62,7 +79,21 @@ const Search = () => {
     }, [query, storageKey]);
 
     const addToRecent = (term) => {
-        let recents = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        let recents = [];
+        try {
+            const raw = localStorage.getItem(storageKey);
+            if (raw && raw !== "[object Object]") {
+                try {
+                    recents = JSON.parse(raw);
+                    if (!Array.isArray(recents)) recents = [];
+                } catch (parseErr) {
+                    recents = [];
+                }
+            }
+        } catch (e) {
+            recents = [];
+        }
+
         if (!recents.includes(term)) {
             recents = [term, ...recents].slice(0, 5); // Keep last 5
             localStorage.setItem(storageKey, JSON.stringify(recents));
@@ -97,7 +128,8 @@ const Search = () => {
         try {
             let currentResults = [];
             if (genreId) {
-                // Genre Search
+                // Genre Search - TMDB discovery doesn't have a simple endpoint in tmdbApi yet, leaving as fetch for now or adding to tmdbApi?
+                // Let's use tmdbApi consistency if possible. But fetch is direct too.
                 const [trending, underrated] = await Promise.all([
                     fetch(`${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_genres=${genreId}&sort_by=popularity.desc`).then(r => r.json()),
                     fetch(`${TMDB_BASE_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_genres=${genreId}&sort_by=vote_average.desc&vote_count.gte=200`).then(r => r.json())
@@ -107,17 +139,9 @@ const Search = () => {
                     trending: trending.results || [],
                     underrated: underrated.results || []
                 });
-                // For genre search, we don't have a single "Top Result" in the same way, but let's assume standard behavior for now across search types if needed.
-                // But Prompt specifically implies "Top Result" from search results. 
-                // If genre search, `results` stays empty in current logic? 
-                // The current logic sets `results` only in "Normal Search".
-                // Let's stick to modifying the Normal Search flow mostly, or unify if needed.
-                // The Prompt says "When screen width is mobile... Top Result card...".
-                // Logic below handles "Normal Search" results.
             } else {
-                // Normal Search
-                const response = await fetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`);
-                const data = await response.json();
+                // Normal Search via tmdbApi
+                const data = await tmdbApi.searchSeries(query);
                 currentResults = data.results || [];
                 setResults(currentResults);
 
@@ -127,9 +151,11 @@ const Search = () => {
                 }
             }
             setLoading(false);
+            stopLoading();
         } catch (error) {
-            console.error("Search failed", error);
+            triggerErrorAutomation(error);
             setLoading(false);
+            stopLoading();
         }
     };
 
@@ -282,10 +308,10 @@ const Search = () => {
             ) : (
                 <div className="search-results-container">
                     {loading ? (
-                        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '100px', color: '#666' }}>Searching...</div>
+                        <div style={{ position: 'relative', height: '400px' }}><PremiumLoader message="Searching series..." /></div>
                     ) : results.length === 0 && !genreSearchData ? (
-                        <div style={{ textAlign: 'center', marginTop: '100px', color: '#999' }}>
-                            <h2>No results for "{query}"</h2>
+                        <div style={{ textAlign: 'center', marginTop: '100px', color: '#FFD600' }}>
+                            <h2 style={{ color: '#FFD600' }}>No results for "{query}"</h2>
                             <p>Try searching for specific series like "Breaking Bad" or "The Office"</p>
                         </div>
                     ) : (
@@ -299,7 +325,8 @@ const Search = () => {
 
                                                 <img
                                                     className="top-poster"
-                                                    src={topResult.poster_path ? `https://image.tmdb.org/t/p/w780${topResult.poster_path}` : 'https://via.placeholder.com/300x450'}
+                                                    src={getResolvedPosterUrl(topResult.id, topResult.poster_path, globalPosters, 'w780')}
+                                                    onError={(e) => e.target.style.display = 'none'}
                                                     alt={topResult.name}
                                                 />
                                             </div>
@@ -329,7 +356,8 @@ const Search = () => {
 
                                                     <img
                                                         className="search-poster"
-                                                        src={item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://via.placeholder.com/200x300'}
+                                                        src={getResolvedPosterUrl(item.id, item.poster_path, globalPosters, 'w500')}
+                                                        onError={(e) => e.target.style.display = 'none'}
                                                         alt={item.name}
                                                     />
                                                 </Link>
@@ -350,7 +378,8 @@ const Search = () => {
 
                                                     <img
                                                         className="search-poster"
-                                                        src={item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://via.placeholder.com/200x300'}
+                                                        src={getResolvedPosterUrl(item.id, item.poster_path, globalPosters, 'w500')}
+                                                        onError={(e) => e.target.style.display = 'none'}
                                                         alt={item.name}
                                                     />
                                                 </Link>

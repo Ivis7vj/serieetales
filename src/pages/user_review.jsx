@@ -4,106 +4,39 @@ import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import { collection, query, where, getDocs, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { tmdbApi } from '../utils/tmdbApi';
+import * as reviewService from '../utils/reviewService';
 
-import { Link } from 'react-router-dom';
-import StorySticker from '../components/StorySticker';
-import ShareModal from '../components/ShareModal';
+// Sticker Logic
+
+import { Link, useNavigate } from 'react-router-dom';
 import ReviewModal from '../components/ReviewModal';
 import LoadingPopup from '../components/LoadingPopup';
-import html2canvas from 'html2canvas';
+import { getResolvedPosterUrl } from '../utils/globalPosterResolver';
+import { useScrollLock } from '../hooks/useScrollLock';
 import './Home.css';
 
 const UserReview = () => {
-    const { currentUser, userData } = useAuth();
+    const navigate = useNavigate();
+    const { currentUser, userData, globalPosters } = useAuth();
     const [reviews, setReviews] = useState([]);
     const [editModal, setEditModal] = useState({ isOpen: false, review: null });
     const [deleteModal, setDeleteModal] = useState({ isOpen: false, reviewId: null, tmdbId: null, isSeries: false });
 
+    // Global Scroll Lock
+    useScrollLock(editModal.isOpen || deleteModal.isOpen);
 
-    // Sticker Logic
-    const [stickerModalOpen, setStickerModalOpen] = useState(false);
-    const [stickerStatus, setStickerStatus] = useState('idle');
-    const [stickerData, setStickerData] = useState(null);
-    const [generatedStickerImage, setGeneratedStickerImage] = useState(null);
-    const stickerRef = useRef(null);
 
-    const generateSticker = async () => {
-        if (!stickerRef.current) return;
-        setStickerStatus('preparing');
 
-        // CRITICAL FIX: Wait for images to load before capture
-        await new Promise(r => setTimeout(r, 100));
+    // Metadata Cache for missing posters/titles
+    const [missingDetails, setMissingDetails] = useState({});
 
-        // Wait for both images
-        const waitForImages = async () => {
-            const maxWait = 4000;
-            const startTime = Date.now();
-
-            while (Date.now() - startTime < maxWait) {
-                const posterLoaded = stickerRef.current?.getAttribute('data-poster-loaded') === 'true';
-                const pfpLoaded = stickerRef.current?.getAttribute('data-pfp-loaded') === 'true';
-
-                if (posterLoaded && pfpLoaded) return true;
-                await new Promise(r => setTimeout(r, 50));
-            }
-
-            console.warn('Image load timeout');
-            return false;
-        };
-
-        await waitForImages();
-        await new Promise(r => setTimeout(r, 400)); // Mobile font/layout delay
-
-        try {
-            const canvas = await html2canvas(stickerRef.current, {
-                useCORS: true, scale: 2, backgroundColor: null, width: 1080, height: 1920,
-                logging: false, allowTaint: false,
-                onclone: (clonedDoc) => {
-                    const el = clonedDoc.getElementById('story-sticker-element');
-                    if (el) { el.style.display = 'flex'; el.style.transform = 'none'; }
-                }
-            });
-            canvas.toBlob((blob) => {
-                if (!blob) return;
-                setGeneratedStickerImage(URL.createObjectURL(blob));
-                setStickerStatus('ready');
-            }, 'image/png');
-        } catch (e) {
-            console.error(e);
-            setStickerStatus('idle');
-        }
-    };
-
-    useEffect(() => {
-        if (stickerModalOpen && stickerData && stickerStatus === 'idle') {
-            generateSticker();
-        }
-    }, [stickerModalOpen, stickerData, stickerStatus]);
-
-    const handleShareSticker = async () => {
-        if (!generatedStickerImage) return;
-        try {
-            const blob = await fetch(generatedStickerImage).then(r => r.blob());
-            const file = new File([blob], `Share_${Date.now()}.png`, { type: 'image/png' });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({ files: [file] });
-            } else {
-                const a = document.createElement('a');
-                a.href = generatedStickerImage; a.download = file.name;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-            }
-        } catch (e) { console.error(e); }
-    };
-
-    const closeStickerModal = () => {
-        setStickerModalOpen(false); setStickerStatus('idle'); setGeneratedStickerImage(null); setStickerData(null);
-    };
 
     const handleShare = (reviewItem, isSeries = true) => {
-        setStickerData({
+        const dataToPass = {
             movie: {
                 name: reviewItem.name,
-                poster_path: reviewItem.poster_path, // Fallback if needed
+                poster_path: reviewItem.poster_path,
                 seasonEpisode: reviewItem.isEpisode ? `S${reviewItem.seasonNumber} E${reviewItem.episodeNumber}` : (reviewItem.isSeason ? `S${reviewItem.seasonNumber}` : null)
             },
             rating: reviewItem.rating ? parseFloat(reviewItem.rating) * 2 : 0,
@@ -113,21 +46,41 @@ const UserReview = () => {
                 uid: currentUser?.uid
             },
             isEpisodes: reviewItem.isEpisode
-        });
-        setStickerModalOpen(true);
-        setStickerStatus('idle');
+        };
+        navigate('/share-sticker', { state: { stickerData: dataToPass } });
     };
 
     useEffect(() => {
         if (!currentUser) return;
         const fetchReviews = async () => {
-            const q = query(collection(db, 'reviews'), where('userId', '==', currentUser.uid));
-            try {
-                const querySnapshot = await getDocs(q);
-                const fetched = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setReviews(fetched.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-            } catch (err) {
-                console.error("Error fetching reviews:", err);
+            const fetched = await reviewService.getUserReviews(currentUser.uid);
+            setReviews(fetched.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+
+            // Identify missing details
+            const missingIds = new Set();
+            fetched.forEach(r => {
+                if ((!r.poster_path || !r.name) && r.tmdbId) {
+                    missingIds.add(r.tmdbId);
+                }
+            });
+
+            // Fetch missing details
+            if (missingIds.size > 0) {
+                const detailsMap = {};
+                await Promise.all(Array.from(missingIds).map(async (id) => {
+                    try {
+                        // Check if we have it in globalPosters logic first? 
+                        // Actually, just fetch fresh to be safe.
+                        const details = await tmdbApi.getSeriesDetails(id);
+                        detailsMap[id] = {
+                            poster_path: details.poster_path,
+                            name: details.name
+                        };
+                    } catch (err) {
+                        console.error(`Failed to fetch details for ${id}`, err);
+                    }
+                }));
+                setMissingDetails(prev => ({ ...prev, ...detailsMap }));
             }
         };
         fetchReviews();
@@ -253,10 +206,10 @@ const UserReview = () => {
                         <div key={group.tmdbId} style={{ background: '#222', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
                             <div style={{ display: 'flex', gap: '1rem' }}>
                                 <Link to={`/${group.type || 'tv'}/${group.tmdbId}`}>
-                                    {group.poster_path ? (
+                                    {group.poster_path || missingDetails[group.tmdbId]?.poster_path ? (
                                         <img
-                                            src={`https://image.tmdb.org/t/p/w92${group.poster_path}`}
-                                            alt={group.name}
+                                            src={getResolvedPosterUrl(group.tmdbId, group.poster_path || missingDetails[group.tmdbId]?.poster_path, globalPosters, 'w92')}
+                                            alt={group.name || missingDetails[group.tmdbId]?.name}
                                             style={{ borderRadius: '4px', width: '60px' }}
                                         />
                                     ) : (
@@ -269,7 +222,7 @@ const UserReview = () => {
                                 <div style={{ flex: 1 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                                         <Link to={`/${group.type || 'tv'}/${group.tmdbId}`} style={{ color: 'white', textDecoration: 'none', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                                            {group.name}
+                                            {group.name || missingDetails[group.tmdbId]?.name || 'Unknown Series'}
                                         </Link>
                                     </div>
 
@@ -328,41 +281,6 @@ const UserReview = () => {
                             </div>
                         </div>
                     ))}
-                </div>
-            )}
-
-            {/* NEW STORY STICKER MODAL */}
-            {stickerModalOpen && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-                    background: 'rgba(0,0,0,0.95)', zIndex: 10000,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexDirection: 'column'
-                }}>
-                    {stickerStatus === 'preparing' && <LoadingPopup />}
-                    {stickerStatus === 'ready' && generatedStickerImage && (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', height: '100%' }}>
-                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', maxWidth: '400px' }}>
-                                <img src={generatedStickerImage} style={{ width: '100%', borderRadius: '16px' }} />
-                            </div>
-                            <div style={{ padding: '30px', display: 'flex', gap: '20px', width: '100%', justifyContent: 'center', background: '#000' }}>
-                                <button onClick={closeStickerModal} style={{ background: '#333', color: 'white', padding: '16px 32px', borderRadius: '50px', border: 'none' }}>Close</button>
-                                <button onClick={handleShareSticker} style={{ background: '#FFD600', color: 'black', padding: '16px 32px', borderRadius: '50px', border: 'none', fontWeight: 'bold' }}>Share</button>
-                            </div>
-                        </div>
-                    )}
-                    {/* Hidden Render Target (Using opacity 0 to ensure images load) */}
-                    <div style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none', zIndex: -1000, width: '1080px', height: '1920px', overflow: 'hidden' }}>
-                        {stickerData && (
-                            <StorySticker
-                                ref={stickerRef}
-                                movie={stickerData.movie}
-                                rating={stickerData.rating}
-                                user={stickerData.user}
-                                isEpisodes={stickerData.isEpisodes}
-                            />
-                        )}
-                    </div>
                 </div>
             )}
 

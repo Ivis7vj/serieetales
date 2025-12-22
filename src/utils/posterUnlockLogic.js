@@ -3,30 +3,25 @@
  * Determines how many posters should be unlocked based on series completion status
  */
 
-export const getPosterUnlockStatus = (seriesSeasons, completedSeasons, seriesId) => {
-    if (!seriesSeasons || seriesSeasons.length === 0) {
-        return { unlockCount: 10, isFullSeriesUnlocked: false };
+export const getPosterUnlockStatus = (totalSeasons, completedCount, totalPosters) => {
+    if (totalSeasons <= 0 || totalPosters <= 0) {
+        return { unlockCount: 0, isFullSeriesUnlocked: false };
     }
 
-    const totalSeasons = seriesSeasons.length;
-    const completedCount = completedSeasons?.[seriesId]?.length || 0;
-
-    // Single season series - unlock all posters
-    if (totalSeasons === 1) {
-        return { unlockCount: Infinity, isFullSeriesUnlocked: true };
+    // If all seasons completed, unlock everything
+    if (completedCount >= totalSeasons) {
+        return { unlockCount: totalPosters, isFullSeriesUnlocked: true };
     }
 
-    // Multiple seasons - check if full series completed
-    if (completedCount === totalSeasons) {
-        // Full series completed - unlock all posters
-        return { unlockCount: Infinity, isFullSeriesUnlocked: true };
+    // Formula: floor((completedCount / totalSeasons) * totalPosters)
+    // Ensure at least 1 poster is unlocked if at least one season is completed
+    let unlockCount = Math.floor((completedCount / totalSeasons) * totalPosters);
+    if (completedCount > 0) {
+        unlockCount = Math.max(1, unlockCount);
     }
 
-    // Partial completion - unlock first 10 posters only
-    return { unlockCount: 10, isFullSeriesUnlocked: false };
-};
-
-export const isSeasonCompleted = (completedSeasons, seriesId, seasonNumber) => {
-    const completed = completedSeasons?.[seriesId] || [];
-    return completed.includes(seasonNumber);
+    return {
+        unlockCount,
+        isFullSeriesUnlocked: completedCount >= totalSeasons
+    };
 };

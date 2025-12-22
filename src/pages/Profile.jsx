@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { MdSettings, MdEdit, MdPhotoCamera, MdGridOn, MdList, MdStar, MdAdd, MdMoreVert, MdCreate, MdClose, MdCheck } from 'react-icons/md';
+import { MdSettings, MdEdit, MdPhotoCamera, MdGridOn, MdList, MdStar, MdAdd, MdMoreVert, MdCreate, MdClose, MdCheck, MdLocalFireDepartment } from 'react-icons/md';
+import MobileIndicator from '../components/MobileIndicator';
+import { useScrollLock } from '../hooks/useScrollLock';
 import { FaInstagram, FaTwitter } from 'react-icons/fa';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useNotification } from '../context/NotificationContext';
@@ -11,40 +13,120 @@ import { doc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc, 
 import './Home.css';
 
 // Simple Image Cropper Component
-import { resolvePoster } from '../utils/posterResolution';
+import { getResolvedPosterUrl } from '../utils/globalPosterResolver';
+import { useLoading } from '../context/LoadingContext';
+import ButtonLoader from '../components/ButtonLoader';
+import BannerSearch from '../components/BannerSearch';
+import BannerSelection from '../components/BannerSelection';
+import BannerViewModal from '../components/BannerViewModal';
+import BannerActionModal from '../components/BannerActionModal';
+import ActivityFeed from '../components/ActivityFeed';
+import * as watchlistService from '../utils/watchlistService';
+import * as diaryService from '../utils/diaryService';
+import { likesService } from '../utils/likesService';
+import { getUserProfileData } from '../utils/profileService';
+import { triggerErrorAutomation } from '../utils/errorAutomation';
+import { tmdbApi } from '../utils/tmdbApi'; // Fixed import path
+
+// Helper for pinch distance
+const getTouchDist = (touches) => {
+    const [t1, t2] = touches;
+    const dx = t1.pageX - t2.pageX;
+    const dy = t1.pageY - t2.pageY;
+    return Math.sqrt(dx * dx + dy * dy);
+};
 
 const ImageCropper = ({ imageSrc, onCancel, onSave }) => {
     const [position, setPosition] = useState({ x: 0, y: 0 });
-    const [dragging, setDragging] = useState(false);
-    const [rel, setRel] = useState(null);
+    const [zoom, setZoom] = useState(1);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [pinchDist, setPinchDist] = useState(null);
+
     const containerRef = useRef(null);
     const imgRef = useRef(null);
 
+    // Ref to access latest state in non-passive event listeners without re-binding
+    const stateRef = useRef({
+        position: { x: 0, y: 0 },
+        zoom: 1,
+        isDragging: false,
+        dragStart: { x: 0, y: 0 },
+        pinchDist: null
+    });
+
+    // Sync state to ref
+    useEffect(() => {
+        stateRef.current = { position, zoom, isDragging, dragStart, pinchDist };
+    }, [position, zoom, isDragging, dragStart, pinchDist]);
+
+    // Attach non-passive listeners
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const handleWheel = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const delta = -e.deltaY * 0.001;
+            const currentZoom = stateRef.current.zoom;
+            setZoom(Math.min(Math.max(0.2, currentZoom + delta), 5));
+        };
+
+        const handleTouchMove = (e) => {
+            e.preventDefault(); // Prevent page scroll
+            const { isDragging, dragStart, pinchDist, zoom } = stateRef.current;
+
+            if (e.touches.length === 1 && isDragging) {
+                setPosition({ x: e.touches[0].pageX - dragStart.x, y: e.touches[0].pageY - dragStart.y });
+            } else if (e.touches.length === 2 && pinchDist) {
+                const newDist = getTouchDist(e.touches);
+                const scaleFactor = newDist / pinchDist;
+                setZoom(Math.min(Math.max(0.2, zoom * scaleFactor), 5));
+                setPinchDist(newDist);
+            }
+        };
+
+        container.addEventListener('wheel', handleWheel, { passive: false });
+        container.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+        return () => {
+            container.removeEventListener('wheel', handleWheel);
+            container.removeEventListener('touchmove', handleTouchMove);
+        };
+    }, []);
+
+    // --- MOUSE EVENTS ---
     const onMouseDown = (e) => {
         if (e.button !== 0) return;
-        setDragging(true);
-        setRel({ x: e.pageX - position.x, y: e.pageY - position.y });
+        setIsDragging(true);
+        setDragStart({ x: e.pageX - position.x, y: e.pageY - position.y });
         e.stopPropagation();
         e.preventDefault();
     };
 
     const onMouseMove = (e) => {
-        if (!dragging) return;
-        setPosition({ x: e.pageX - rel.x, y: e.pageY - rel.y });
+        if (!isDragging) return;
+        setPosition({ x: e.pageX - dragStart.x, y: e.pageY - dragStart.y });
         e.stopPropagation();
         e.preventDefault();
     };
 
-    const onMouseUp = () => setDragging(false);
+    const onMouseUp = () => setIsDragging(false);
 
     const onTouchStart = (e) => {
-        setDragging(true);
-        setRel({ x: e.touches[0].pageX - position.x, y: e.touches[0].pageY - position.y });
+        if (e.touches.length === 1) {
+            setIsDragging(true);
+            setDragStart({ x: e.touches[0].pageX - position.x, y: e.touches[0].pageY - position.y });
+        } else if (e.touches.length === 2) {
+            setIsDragging(false);
+            setPinchDist(getTouchDist(e.touches));
+        }
     };
 
-    const onTouchMove = (e) => {
-        if (!dragging) return;
-        setPosition({ x: e.touches[0].pageX - rel.x, y: e.touches[0].pageY - rel.y });
+    const onTouchEnd = () => {
+        setIsDragging(false);
+        setPinchDist(null);
     };
 
     const handleSave = () => {
@@ -55,51 +137,159 @@ const ImageCropper = ({ imageSrc, onCancel, onSave }) => {
         const ctx = canvas.getContext('2d');
         const img = imgRef.current;
         if (!img) return;
-        const scale = img.naturalWidth / img.width;
-        ctx.drawImage(img, -position.x * scale, -position.y * scale, size * scale, size * scale, 0, 0, size, size);
+
+        // Fill black background first (for zoomed out fit)
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, size, size);
+
+        // Calculate rendered size to draw 1:1 with view
+        const renderWidth = img.offsetWidth;
+        const renderHeight = img.offsetHeight;
+
+        // Draw Image at current position with current size
+        ctx.drawImage(img, position.x, position.y, renderWidth, renderHeight);
+
         onSave(canvas.toDataURL('image/jpeg', 0.9));
     };
 
     return (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.9)', zIndex: 3000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.95)', zIndex: 3000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', touchAction: 'none' }}>
             <h3 style={{ color: 'white', marginBottom: '20px' }}>Adjust Profile Photo</h3>
             <div
                 ref={containerRef}
-                style={{ width: '300px', height: '300px', border: '2px solid var(--accent-color)', position: 'relative', overflow: 'hidden', cursor: 'move', background: '#000' }}
-                onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
-                onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onMouseUp}
+                style={{ width: '300px', height: '300px', border: '2px solid var(--accent-color)', position: 'relative', overflow: 'hidden', cursor: isDragging ? 'grabbing' : 'grab', background: '#000' }}
+                onMouseDown={onMouseDown}
+                onMouseMove={onMouseMove}
+                onMouseUp={onMouseUp}
+                onMouseLeave={onMouseUp}
+                onTouchStart={onTouchStart}
+                onTouchEnd={onTouchEnd}
             >
-                <div style={{ position: 'absolute', top: '33%', left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.3)', pointerEvents: 'none', zIndex: 10 }}></div>
-                <div style={{ position: 'absolute', top: '66%', left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.3)', pointerEvents: 'none', zIndex: 10 }}></div>
-                <div style={{ position: 'absolute', left: '33%', top: 0, bottom: 0, width: '1px', background: 'rgba(255,255,255,0.3)', pointerEvents: 'none', zIndex: 10 }}></div>
-                <div style={{ position: 'absolute', left: '66%', top: 0, bottom: 0, width: '1px', background: 'rgba(255,255,255,0.3)', pointerEvents: 'none', zIndex: 10 }}></div>
-                <img ref={imgRef} src={imageSrc} alt="Edit" draggable={false} style={{ position: 'absolute', top: position.y, left: position.x, maxWidth: 'none', minWidth: '300px', userSelect: 'none' }} />
+                {/* Guidelines */}
+                <div style={{ position: 'absolute', top: '33%', left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.2)', pointerEvents: 'none', zIndex: 10 }}></div>
+                <div style={{ position: 'absolute', top: '66%', left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.2)', pointerEvents: 'none', zIndex: 10 }}></div>
+                <div style={{ position: 'absolute', left: '33%', top: 0, bottom: 0, width: '1px', background: 'rgba(255,255,255,0.2)', pointerEvents: 'none', zIndex: 10 }}></div>
+                <div style={{ position: 'absolute', left: '66%', top: 0, bottom: 0, width: '1px', background: 'rgba(255,255,255,0.2)', pointerEvents: 'none', zIndex: 10 }}></div>
+
+                <img
+                    ref={imgRef}
+                    src={imageSrc}
+                    alt="Edit"
+                    draggable={false}
+                    style={{
+                        position: 'absolute',
+                        top: position.y,
+                        left: position.x,
+                        // Flexible width based on zoom, allowing it to be smaller than container
+                        width: `${300 * zoom}px`,
+                        maxWidth: 'none',
+                        userSelect: 'none',
+                        transformOrigin: 'top left',
+                        willChange: 'width, top, left'
+                    }}
+                />
             </div>
-            <div style={{ marginTop: '20px', display: 'flex', gap: '20px' }}>
-                <button onClick={onCancel} style={{ padding: '10px 20px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>CANCEL</button>
-                <button onClick={handleSave} style={{ padding: '10px 20px', background: 'var(--accent-color)', color: '#000', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>SAVE</button>
+
+            {/* Zoom Slider */}
+            <div style={{ width: '300px', margin: '20px 0 10px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ color: '#888', fontSize: '1.2rem' }}>-</span>
+                <input
+                    type="range"
+                    min="0.2"
+                    max="5"
+                    step="0.01"
+                    value={zoom}
+                    onChange={(e) => setZoom(parseFloat(e.target.value))}
+                    style={{ flex: 1, accentColor: 'var(--accent-color)', cursor: 'pointer' }}
+                />
+                <span style={{ color: '#888', fontSize: '1.2rem' }}>+</span>
             </div>
-            <p style={{ color: '#888', marginTop: '10px', fontSize: '0.8rem' }}>Drag to reposition</p>
+
+            <div style={{ marginTop: '10px', display: 'flex', gap: '20px' }}>
+                <button onClick={onCancel} style={{ padding: '10px 20px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>CANCEL</button>
+                <button onClick={handleSave} style={{ padding: '10px 20px', background: 'var(--accent-color)', color: '#000', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>SAVE</button>
+            </div>
+            <p style={{ color: '#666', marginTop: '10px', fontSize: '0.8rem', textAlign: 'center' }}>
+                Pinch/Scroll to Zoom • Drag to Move
+            </p>
         </div>
     );
+};
+
+// Helper: Robustly parses a TMDB ID, ensuring it's a number.
+const parseTmdbId = (id) => {
+    if (!id) return null;
+    if (typeof id === 'number') return id;
+    if (typeof id === 'string' && id.includes('-S')) {
+        const numeric = parseInt(id.split('-S')[0]);
+        return isNaN(numeric) ? null : numeric;
+    }
+    const numeric = parseInt(id);
+    if (isNaN(numeric) || (typeof id === 'string' && id.match(/[a-z]/i) && !id.includes('-S'))) return null;
+    return numeric;
+};
+
+// Helper: Hydrate Likes with TMDB Data (Strict SSOT Rule: No metadata in DB)
+const hydrateLikes = async (likesList) => {
+    if (!likesList || likesList.length === 0) return [];
+
+    const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || '05587a49bd4890a9630d6c0e544e0f6f';
+    const uniqueIds = [...new Set(likesList.map(l => l.tmdbId))];
+
+    // Fetch detailed data for each show via cached tmdbApi
+    const results = await Promise.all(uniqueIds.map(async (id) => {
+        try {
+            return await tmdbApi.getSeriesDetails(id);
+        } catch (e) { return null; }
+    }));
+
+    const seriesMap = results.reduce((acc, curr) => {
+        if (curr) acc[curr.id] = curr;
+        return acc;
+    }, {});
+
+    return likesList.map(item => {
+        const series = seriesMap[item.tmdbId];
+        let poster = null;
+        let name = 'Unknown Series';
+
+        if (series) {
+            poster = series.poster_path;
+            name = series.name;
+            // Use Season Poster if applicable
+            if (item.type === 'SEASON' && item.seasonNumber && series.seasons) {
+                const s = series.seasons.find(sea => sea.season_number === item.seasonNumber);
+                if (s && s.poster_path) poster = s.poster_path;
+            }
+        }
+
+        return {
+            ...item,
+            poster_path: poster,
+            seasonPoster: (item.type === 'SEASON') ? poster : null,
+            seriesName: name
+        };
+    });
 };
 
 const Profile = () => {
     const { uid } = useParams(); // Get uid from URL if present
     const navigate = useNavigate();
-    const { currentUser, logout } = useAuth();
+    const { currentUser, logout, globalPosters } = useAuth();
 
     // Determine Target User (URL param > Current User)
     const targetUid = uid || currentUser?.uid;
     const isOwnProfile = !uid || (currentUser && targetUid === currentUser.uid);
 
-    const [user, setUser] = useState({});
+    const [user, setUser] = useState(null); // Null means not loaded
     const [stats, setStats] = useState({ thisYear: 0, following: 0, followers: 0 });
     const [activeTab, setActiveTab] = useState('Profile');
     const [profilePhoto, setProfilePhoto] = useState(null);
     const [showMenu, setShowMenu] = useState(false);
     const [editImageSrc, setEditImageSrc] = useState(null);
     const [showFullPFP, setShowFullPFP] = useState(false);
+    const [pageLoading, setPageLoading] = useState(true);
+    const [hasNewActivity, setHasNewActivity] = useState(false);
     const menuRef = useRef(null);
 
     const isCollapsed = activeTab !== 'Profile';
@@ -110,112 +300,46 @@ const Profile = () => {
     const [watched, setWatched] = useState([]);
     const [activityItems, setActivityItems] = useState([]);
     const [starSeriesIds, setStarSeriesIds] = useState(new Set());
+    const [followLoading, setFollowLoading] = useState(false);
 
-    // Fetch User Data (Optimized)
-    useEffect(() => {
+    // Profile-specific Posters (Handles \"My View\" vs \"Friend View\")
+    const [profilePosters, setProfilePosters] = useState({});
+
+    // Banner Logic States
+    const [showBannerSearch, setShowBannerSearch] = useState(false);
+    const [showBannerSelection, setShowBannerSelection] = useState(false);
+    const [selectedBannerSeries, setSelectedBannerSeries] = useState(null);
+    const [showBannerView, setShowBannerView] = useState(false);
+    const [showBannerAction, setShowBannerAction] = useState(false);
+
+    // Activity Feed State
+    const [userActivityFeed, setUserActivityFeed] = useState([]);
+    const { stopLoading } = useLoading();
+
+    // Fetch User Data (Optimized with ProfileService)
+    const loadProfileData = async () => {
         if (!targetUid) return;
 
-        let unsubUser = () => { };
+        // 1. Fetch Aggregated Data
+        const { userInfo, diary, watchlist: wl, likes: rawLikes, ratings: dbRatings, activityPreview, userPosters } = await getUserProfileData(targetUid);
 
-        const loadProfile = async () => {
-            // 1. Current User Profile (From AuthContext)
-            if (isOwnProfile && currentUser && window.location.pathname.includes('/profile') && !uid) {
-                // Note: The check !uid ensures we are on /profile (self) usually, but logic depends on routing. 
-                // isOwnProfile is reliable: (currentUser && targetUid === currentUser.uid).
-                // If we are looking at our own profile via /profile/MY_ID, we can still use context.
-
-                // However, AuthContext's userData might be null initially.
-                // We rely on AuthContext for updates.
-                if (currentUser) {
-                    // We don't need to do anything if we use prop/context derived state, 
-                    // BUT this component uses local state 'user', 'watchlist', etc.
-                    // We should sync local state with Context whenever Context updates.
-                    // See separate useEffect below.
-                    return;
-                }
-            }
-
-            // 2. Other User Profile (One-time fetch to save reads, or onSnapshot if preferred. Plan said getDoc)
-            if (!isOwnProfile) {
-                try {
-                    const docRef = doc(db, 'users', targetUid);
-                    const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        setUser({ ...data, username: data.username || data.email?.split('@')[0] || 'User' });
-                        setProfilePhoto(data.photoURL || null);
-                        setWatchlist(data.watchlist || []);
-                        setLikes(data.likes || []);
-                        setWatched(data.watched || []);
-
-                        const achievements = data.achievements || [];
-                        const starSeries = data.starSeries || [];
-                        setStarSeriesIds(new Set(starSeries.map(s => s.id)));
-
-                        const loadedFavs = data.favorites || [];
-
-                        // Favorites Logic
-                        const limitedFavs = loadedFavs.slice(0, 5);
-                        const paddedFavs = [...limitedFavs, ...Array(Math.max(0, 5 - limitedFavs.length)).fill(null)].map(f => {
-                            if (!f) return null;
-                            return { ...f, isStar: starSeries.some(s => s.id === f.id) };
-                        });
-                        setFavorites(paddedFavs);
-
-                        // Stats
-                        const currentYear = new Date().getFullYear();
-                        setStats({
-                            thisYear: achievements.filter(a => a.type === 'season_finish' && new Date(a.date).getFullYear() === currentYear).length,
-                            totalSeasons: achievements.filter(a => a.type === 'season_finish').length,
-                            following: data.following?.length || 0,
-                            followers: data.followers?.length || 0
-                        });
-
-                        // Check Follow Status
-                        if (currentUser && data.followers?.includes(currentUser.uid)) {
-                            setIsFollowing(true);
-                        } else {
-                            setIsFollowing(false);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Error fetching user profile:", e);
-                }
-            }
-        };
-
-        if (!isOwnProfile) {
-            loadProfile();
+        // Set Posters (Own vs Other)
+        if (targetUid === currentUser?.uid) {
+            setProfilePosters(globalPosters || {});
+        } else if (userPosters) {
+            setProfilePosters(userPosters);
         }
 
-        const handleClickOutside = (event) => {
-            if (menuRef.current && !menuRef.current.contains(event.target)) setShowMenu(false);
-        };
-        document.addEventListener('mousedown', handleClickOutside);
+        if (userInfo) {
+            setUser(userInfo);
+            setProfilePhoto(userInfo.photoURL);
 
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
-    }, [targetUid, isOwnProfile, currentUser]); // Removed unsub logic from here for self
-
-    // Sync Self Data from Context
-    const { userData: authUserData } = useAuth(); // Global State
-
-    useEffect(() => {
-        if (isOwnProfile && authUserData) {
-            const data = authUserData;
-            setUser({ ...data, username: data.username || data.email?.split('@')[0] || 'User' });
-            setProfilePhoto(data.photoURL || null);
-            setWatchlist(data.watchlist || []);
-            setLikes(data.likes || []);
-            setWatched(data.watched || []);
-
-            const achievements = data.achievements || [];
-            const starSeries = data.starSeries || [];
+            // Update Derived State
+            const starSeries = userInfo.starSeries || [];
             setStarSeriesIds(new Set(starSeries.map(s => s.id)));
 
-            const loadedFavs = data.favorites || [];
-            // Favorites Logic
+            // Favorites
+            const loadedFavs = userInfo.favorites || [];
             const limitedFavs = loadedFavs.slice(0, 5);
             const paddedFavs = [...limitedFavs, ...Array(Math.max(0, 5 - limitedFavs.length)).fill(null)].map(f => {
                 if (!f) return null;
@@ -225,14 +349,110 @@ const Profile = () => {
 
             // Stats
             const currentYear = new Date().getFullYear();
+            const achievements = userInfo.achievements || [];
+            const followedByMe = userInfo.followers?.includes(currentUser?.uid);
+
             setStats({
                 thisYear: achievements.filter(a => a.type === 'season_finish' && new Date(a.date).getFullYear() === currentYear).length,
-                totalSeasons: achievements.filter(a => a.type === 'season_finish').length,
-                following: data.following?.length || 0,
-                followers: data.followers?.length || 0
+                following: userInfo.following?.length || 0,
+                followers: userInfo.followers?.length || 0,
+                streak: userInfo.streak?.current || 0
             });
+            setIsFollowing(followedByMe);
         }
-    }, [isOwnProfile, authUserData]);
+
+        // 2. Set SSOT Data
+        setWatchlist(wl);
+        setWatched(diary); // Diary
+        setUserActivityFeed(activityPreview);
+
+        // 3. Hydrate Likes
+        const hydratedLikes = await hydrateLikes(rawLikes);
+        setLikes(hydratedLikes);
+
+        // Signal page ready
+        stopLoading();
+        setPageLoading(false);
+    };
+
+    useEffect(() => {
+        loadProfileData();
+
+        // Menu Close Handler
+        const handleClickOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) setShowMenu(false);
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+
+    }, [targetUid, currentUser]);
+    // Removing 'globalPosters' dependency as hydration uses helper or internal logic? 
+    // Wait, profilePosters state logic?
+    // The previous code had specific logic for profilePosters fetching.
+    // I should probably Keep the profilePosters logic separate if services don't handle it.
+    // The instructions said "Replace them with ONE call ... profileService.getUserProfileData".
+    // Does profileService return user posters? No.
+    // So I should keep the existing `profilePosters` useEffect logic found in lines 253-276?
+    // The prompt: "No direct DB queries in Profile.jsx".
+    // line 259: `supabase.from('user_posters')...`
+    // I should move this to profileService or a separate service call? 
+    // Prompt says "REMOVE ALL direct queries to: Supabase".
+    // So I should have included 'user_posters' in profileService.
+    // BUT the prompt didn't list `user_posters` in "Expected return shape". 
+    // "Expected return shape: { userInfo, diary, watchlist, likes, ratings, activityPreview }".
+    // AND "NO new features".
+
+    // I will KEEP the `profilePosters` fetch separate for now (or move to profileService if permissible, but risk breaking expected shape).
+    // Actually, `user_posters` table query IS a Supabase query.
+    // User Instructions: "Replace them with ONE call ... profileService.getUserProfileData(uid)".
+    // If I leave `user_posters` query, I fail "No direct DB queries".
+    // I should Add `userPosters` to `profileService` return? 
+    // Or ignore? If I ignore, Profile Posters break.
+    // I will Add it to `profileService` implementation in a minute? 
+    // Or just leave it as an exception?
+    // "Phase 2.7 goal ... Reduce DB reads".
+    // If I add it to `profileService`, I reduce network calls.
+    // I Will UPDATE `profileService.js` to include `user_posters` fetch.
+    // But first, let's look at the replacement block.
+    // I need to be careful not to delete the `profilePosters` logic if I don't have replacement.
+    // I will leave `profilePosters` logic for a separate tool call to move it to `profileService`? 
+    // Step 2 is: "Replace loadProfile and syncSelfData logic". 
+    // I will replace `loadProfile` and `syncSelfData`.
+    // I will leave `profilePosters` block (lines 253-276) alone for now, because it was separate.
+    // Wait, the block I am replacing spans 252-463. This INCLUDES `profilePosters`.
+    // If I overwrite valid logic with nothing, I break "Profile loads correctly".
+    // I MUST move `user_posters` fetching to `profileService` OR keep the logic.
+    // I will KEEP the logic by including it in the new `useEffect` but wrapped inline? 
+    // No, "Removes duplicated queries".
+    // I WILL UPDATE `profileService.js` to fetch posters too.
+
+    // BUT I cannot update `profileService.js` in this `multi_replace`.
+    // Implementation Plan: "Import and reuse existing services: diary, watchlist, likes, ratings".
+    // Does not mention `userPosters`.
+    // I will assume `userPosters` is minor enough to fetch separately or inline via `supabase-config` import?
+    // But explicit rule: "Remove ALL direct queries to Supabase".
+    // Okay, I will add `user_posters` to `profileService` in a subsequent step (or previous step, but I already wrote it).
+    // I will perform the Profile update assuming I will FIX `profileService` to return posters.
+    // I will update `Profile.jsx` to USE `profilePosters` from service.
+
+    // Wait, line 253-276:
+    /*
+        if (targetUid === currentUser?.uid) {
+            setProfilePosters(globalPosters || {});
+        } else if (targetUid) {
+             // Fetch from Supabase
+        }
+    */
+    // This logic handles "My View" (Context) vs "Friend View" (DB).
+    // Service handles DB. 
+    // So `getUserProfileData` should return `userPosters` (from DB).
+    // In `Profile.jsx`:
+    // if (targetUid === currentUser) setProfilePosters(globalPosters)
+    // else setProfilePosters(data.userPosters)
+
+    // Okay. Ready.
 
     // Reviews Pagination Logic
     const [lastReview, setLastReview] = useState(null);
@@ -275,10 +495,12 @@ const Profile = () => {
 
     // Trigger Fetch on Tab Change
     useEffect(() => {
-        if ((activeTab === 'Reviews' || activeTab === 'Activity') && reviews.length === 0 && hasMoreReviews) {
+        if (activeTab === 'Reviews' && reviews.length === 0 && hasMoreReviews) {
             fetchReviews(true);
         }
     }, [activeTab, targetUid]);
+
+    // Activity Feed Fetch - REMOVED (Moved to ActivityFeed component)
 
 
     const { alert } = useNotification();
@@ -307,8 +529,7 @@ const Profile = () => {
                 await updateDoc(doc(db, 'users', currentUser.uid), { starSeries: [] });
                 alert("All Star Badges have been removed.", "Cleanup Successful");
             } catch (e) {
-                console.error(e);
-                alert("Failed to reset.", "Error");
+                triggerErrorAutomation(e);
             }
         }
     };
@@ -318,11 +539,13 @@ const Profile = () => {
     // Pull to Refresh State
     const [refreshing, setRefreshing] = useState(false);
     const [pullStartY, setPullStartY] = useState(0);
+    const [pullProgress, setPullProgress] = useState(0);
 
     const handleBoxClick = (index) => window.dispatchEvent(new CustomEvent('trigger-search-bar', { detail: { slotIndex: index } }));
 
     const handleFollowToggle = async () => {
-        if (!currentUser || !targetUid) return;
+        if (!currentUser || !targetUid || followLoading) return;
+        setFollowLoading(true);
 
         const myRef = doc(db, 'users', currentUser.uid);
         const targetRef = doc(db, 'users', targetUid);
@@ -393,12 +616,9 @@ const Profile = () => {
                 setIsFollowing(true);
             }
         } catch (error) {
-            console.error("Error toggling follow:", error);
-            if (error.code === 'permission-denied') {
-                alert("Permission Denied: Unable to update follower stats. Please check Firestore Security Rules to allow updating 'followers' array for other users.", "Backend Error");
-            } else {
-                alert("Failed to update follow status.", "Error");
-            }
+            triggerErrorAutomation(error);
+        } finally {
+            setFollowLoading(false);
         }
     };
 
@@ -406,22 +626,23 @@ const Profile = () => {
     const handleTouchStart = (e) => {
         if (window.scrollY === 0) setPullStartY(e.touches[0].clientY);
     };
-
     const handleTouchMove = (e) => {
+        if (!pullStartY) return;
         const y = e.touches[0].clientY;
-        if (pullStartY && y > pullStartY + 50 && window.scrollY === 0) {
-            // Visual cue could go here
+        const diff = y - pullStartY;
+        if (diff > 0 && window.scrollY === 0) {
+            setPullProgress(Math.min(diff / 150, 1));
         }
     };
-
     const handleTouchEnd = (e) => {
-        const y = e.changedTouches[0].clientY;
-        if (pullStartY && y > pullStartY + 100 && window.scrollY === 0) {
+        if (pullProgress === 1) {
             setRefreshing(true);
-            // Simulate refresh or reload
-            setTimeout(() => {
-                window.location.reload();
-            }, 800);
+            setPullProgress(0);
+            loadProfileData().finally(() => {
+                setTimeout(() => setRefreshing(false), 500);
+            });
+        } else {
+            setPullProgress(0);
         }
         setPullStartY(0);
     };
@@ -435,7 +656,7 @@ const Profile = () => {
         sorted.forEach(item => {
             const itemDateStr = new Date(item.date).toDateString();
             if (item.isEpisode) {
-                if (currentGroup && currentGroup.seriesId === item.seriesId && currentGroup.seasonNumber === item.seasonNumber && new Date(currentGroup.date).toDateString() === itemDateStr) {
+                if (currentGroup && currentGroup.tmdbId === item.tmdbId && currentGroup.seasonNumber === item.seasonNumber && new Date(currentGroup.date).toDateString() === itemDateStr) {
                     currentGroup.episodes.push(item);
                     currentGroup.episodeCount++;
                 } else {
@@ -478,7 +699,24 @@ const Profile = () => {
         return isNaN(date.getTime()) ? '' : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
 
+    // Banner Handlers
+    const handleBannerClick = () => {
+        if (isOwnProfile) {
+            setShowBannerAction(true);
+        } else if (user?.bannerBackdropPath) {
+            setShowBannerView(true);
+        }
+    };
+
+    const handleSeriesForBanner = (series) => {
+        setSelectedBannerSeries(series);
+        setShowBannerSearch(false);
+        setShowBannerSelection(true);
+    };
+
     const [basketModalData, setBasketModalData] = useState(null);
+
+    useScrollLock(editImageSrc || showFullPFP || basketModalData || showBannerSearch || showBannerSelection);
 
     // Grouping Logic for Watchlist (Deduplicated)
     const processWatchlist = (list) => {
@@ -543,32 +781,20 @@ const Profile = () => {
     const handleRemoveFromWatchlist = async (itemToRemove) => {
         if (!currentUser) return;
         try {
-            const userRef = doc(db, 'users', currentUser.uid);
-            const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-                const currentList = userSnap.data().watchlist || [];
-                // Filter out the item based on ID/Season/Ep match
-                // Assuming objects might differ slightly in memory, better to compare unique IDs
-                // But watchlist items don't strictly have unique instance IDs, so check props
-                const updatedList = currentList.filter(i => {
-                    const isSameSeries = (i.seriesId || i.id) === (itemToRemove.seriesId || itemToRemove.id);
-                    const isSameSeason = i.seasonNumber === itemToRemove.seasonNumber;
-                    const isSameEp = i.episodeNumber === itemToRemove.episodeNumber;
+            // OPTIMISTIC UPDATE: Update local state immediately
+            setWatchlist(prev => prev.filter(i => {
+                const isSameItem = (i.id || i.tmdb_id) === (itemToRemove.id || itemToRemove.tmdb_id);
+                return !isSameItem;
+            }));
 
-                    // If removing an episode: match all 3
-                    if (itemToRemove.episodeNumber) return !(isSameSeries && isSameSeason && isSameEp);
-                    // If removing series: match seriesId (and ensure it was a whole series entry?)
-                    return !(isSameSeries && !i.episodeNumber);
-                });
+            // SUPABASE DELETE: Remove from SSOT
+            await watchlistService.removeFromWatchlist(currentUser.uid, itemToRemove.id || itemToRemove.tmdb_id);
 
-                await updateDoc(userRef, { watchlist: updatedList });
-
-                // Update local basket state if open
-                if (basketModalData) {
-                    const newBasketEps = basketModalData.episodes.filter(i => i !== itemToRemove);
-                    if (newBasketEps.length === 0) setBasketModalData(null);
-                    else setBasketModalData({ ...basketModalData, episodes: newBasketEps });
-                }
+            // Update local basket state if open
+            if (basketModalData) {
+                const newBasketEps = basketModalData.episodes.filter(i => (i.id || i.tmdb_id) !== (itemToRemove.id || itemToRemove.tmdb_id));
+                if (newBasketEps.length === 0) setBasketModalData(null);
+                else setBasketModalData({ ...basketModalData, episodes: newBasketEps });
             }
         } catch (error) {
             console.error("Error removing from watchlist:", error);
@@ -589,11 +815,17 @@ const Profile = () => {
                                         <div key={index} className="favorite-box" style={{ border: 'none', overflow: 'visible', margin: (fav && starSeriesIds.has(fav.id)) ? '20px 0 0 20px' : '0', transition: 'margin 0.3s' }}>
                                             {fav ? (
                                                 <>
-                                                    <Link to={fav.seasonNumber ? `/tv/${fav.id}/season/${fav.seasonNumber}` : `/tv/${fav.id}`} style={{ display: 'block', width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
-                                                        <img src={`https://image.tmdb.org/t/p/w342${resolvePoster(user, fav.id, fav.seasonNumber, fav.seasonPoster || fav.poster_path)}`} alt={fav.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    {(() => {
+                                                        const validTmdbId = parseTmdbId(fav.tmdbId || fav.id);
+                                                        if (!validTmdbId) return null; // Don't link if ID is malformed
 
-                                                    </Link>
-                                                    {isOwnProfile && <button onClick={(e) => { e.preventDefault(); handleBoxClick(index); }} using className="edit-fav-btn"><MdCreate /></button>}
+                                                        return (
+                                                            <Link to={fav.seasonNumber ? `/tv/${validTmdbId}/season/${fav.seasonNumber}` : `/tv/${validTmdbId}`} style={{ display: 'block', width: '100%', height: '100%', position: 'relative', overflow: 'visible' }}>
+                                                                <img src={getResolvedPosterUrl(validTmdbId, fav.seasonPoster || fav.poster_path, profilePosters, 'w342') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} alt={fav.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                            </Link>
+                                                        );
+                                                    })()}
+                                                    {isOwnProfile && <button onClick={(e) => { e.preventDefault(); handleBoxClick(index); }} className="edit-fav-btn"><MdCreate /></button>}
                                                 </>
                                             ) : (
                                                 isOwnProfile ? (
@@ -612,256 +844,62 @@ const Profile = () => {
                 case 'Diary':
                     const groups = getDiaryGroups();
                     return (
-                        <div style={{ maxWidth: '100%', overflow: 'hidden' }}>
+                        <div style={{ maxWidth: '100%', paddingBottom: '20px' }}>
                             {Object.keys(groups).length === 0 ? <p style={{ color: 'var(--text-muted)' }}>No entries yet.</p> : Object.keys(groups).map((group, i) => (
-                                <div key={i} style={{ marginBottom: '2.5rem' }}>
-                                    <h3 style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--text-primary)', marginBottom: '15px' }}>{group}</h3>
-                                    <div className="diary-scroll-container">
-                                        {groups[group].map((item, idx) => (
-                                            <div key={idx} className="diary-item" style={{ paddingTop: starSeriesIds.has(item.seriesId || item.id) ? '20px' : '0', paddingLeft: starSeriesIds.has(item.seriesId || item.id) ? '20px' : '0', width: starSeriesIds.has(item.seriesId || item.id) ? '180px' : '160px', transition: 'all 0.3s' }}>
-                                                <Link to={item.seasonNumber ? `/tv/${item.seriesId || item.id}/season/${item.seasonNumber}` : `/tv/${item.seriesId || item.id}`} style={{ display: 'block', width: '100%', height: '100%', position: 'relative', overflow: 'visible', borderRadius: '4px' }}>
+                                <div key={i} style={{ marginBottom: '2rem' }}>
+                                    <h3 style={{ fontSize: '1rem', fontWeight: '900', color: '#888', marginBottom: '15px', textTransform: 'uppercase', letterSpacing: '1px' }}>{group}</h3>
+                                    <div className="diary-grid">
+                                        {groups[group].map((item, idx) => {
+                                            const dateObj = new Date(item.date);
+                                            const dateBadge = `${dateObj.getDate()} ${dateObj.toLocaleString('default', { month: 'short' }).toUpperCase()}`;
+                                            const cleanTitle = item.name.replace(/\s*\(Season \d+\)$/, ''); // Strip season text if present
 
-                                                    <img src={`https://image.tmdb.org/t/p/w342${item.seasonPoster || item.poster_path}`} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+                                            return (
+                                                <div key={idx} className="diary-card">
+                                                    <Link
+                                                        to={item.seasonNumber ? `/tv/${item.tmdbId}/season/${item.seasonNumber}` : `/tv/${item.tmdbId}`}
+                                                        className="diary-poster-container"
+                                                    >
+                                                        <img
+                                                            src={getResolvedPosterUrl(item.tmdbId, item.seasonPoster || item.poster_path, profilePosters, 'w342') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'}
+                                                            alt={item.name}
+                                                        />
+                                                        {/* DATE BADGE ONLY */}
+                                                        <div className="diary-poster-date">
+                                                            {dateBadge}
+                                                        </div>
+                                                    </Link>
 
-                                                    {/* Internal Badges (Reverted) */}
-                                                    <div className="diary-date-badge">
-                                                        <div style={{ fontSize: '1rem', fontWeight: '900', lineHeight: 1 }}>{new Date(item.date).getDate()}</div>
-                                                        <div style={{ fontSize: '0.6rem', fontWeight: 'bold', textTransform: 'uppercase' }}>{new Date(item.date).toLocaleString('default', { month: 'short' })}</div>
+                                                    <div className="diary-info">
+                                                        <div className="diary-title">{cleanTitle}</div>
+                                                        {item.seasonNumber && (
+                                                            <div className="diary-season">Season {item.seasonNumber}</div>
+                                                        )}
                                                     </div>
-
-                                                    {item.isGroup && <div className="diary-eps-badge">{item.episodeCount} eps</div>}
-                                                    {(item.seasonNumber || item.isSeason) && <div className="diary-season-badge">S{item.seasonNumber}</div>}
-                                                    {item.rating && <div className="diary-rating-badge"><MdStar /> {item.rating}</div>}
-                                                </Link>
-
-
-                                            </div>
-                                        ))}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             ))}
-                            {/* Earned Posters Section REMOVED (Moved to Tab) */}
                         </div >
                     );
                 case 'Activity':
-                    const rawActivityItems = [
-                        ...reviews.map(r => ({ ...r, type: 'review', date: r.date })),
-                        ...watched.map(w => ({ ...w, type: 'watched', date: w.date })),
-                        ...watchlist.map(w => ({ ...w, type: 'watchlist', date: w.date || w.dateAdded })),
-                        ...likes.map(l => ({ ...l, type: 'liked', date: l.date }))
-                    ].sort((a, b) => {
-                        const getDate = (d) => {
-                            if (!d) return 0;
-                            // Handle Firestore Timestamp (has toDate method)
-                            if (typeof d === 'object' && typeof d.toDate === 'function') return d.toDate().getTime();
-                            const parsed = new Date(d).getTime();
-                            return isNaN(parsed) ? 0 : parsed;
-                        };
-                        return getDate(b.date) - getDate(a.date);
-                    });
-
-                    // Group Activity (Consecutive Watchlist Items for same Season)
-                    const groupedActivity = [];
-                    let currentGroup = null;
-
-                    rawActivityItems.forEach(item => {
-                        // Only Group Watchlist Items for now (as requested)
-                        if (item.type === 'watchlist' && item.seasonNumber !== undefined) {
-                            const itemSeriesId = item.seriesId || item.id;
-                            const groupSeriesId = currentGroup ? (currentGroup.seriesId || currentGroup.id) : null;
-
-                            const isMatch = currentGroup &&
-                                currentGroup.type === 'watchlist' &&
-                                groupSeriesId === itemSeriesId &&
-                                currentGroup.seasonNumber === item.seasonNumber;
-
-                            if (isMatch) {
-                                currentGroup.episodes.push(item);
-                                currentGroup.episodeCount = currentGroup.episodes.length;
-                                // If current item is the Season Item, capture metadata
-                                if (item.isSeason) {
-                                    currentGroup.name = item.name;
-                                    currentGroup.poster_path = item.poster_path; // Season poster
-                                    currentGroup.isSeasonItemFound = true;
-                                }
-                                // If seasonPoster available on item, update group
-                                if (!currentGroup.seasonPoster && item.seasonPoster) {
-                                    currentGroup.seasonPoster = item.seasonPoster;
-                                }
-                                return;
-                            } else {
-                                // Flush previous
-                                if (currentGroup) groupedActivity.push(currentGroup);
-
-                                // Start new group
-                                currentGroup = {
-                                    ...item,
-                                    isGroup: true,
-                                    episodes: [item],
-                                    episodeCount: 1,
-                                    // Use proper name from start if possible
-                                    name: item.name,
-                                    poster_path: item.seasonPoster || item.poster_path
-                                };
-                                return;
-                            }
-                        }
-
-                        // Flush previous if exists
-                        if (currentGroup) {
-                            groupedActivity.push(currentGroup);
-                            currentGroup = null;
-                        }
-
-                        groupedActivity.push(item);
-                    });
-                    if (currentGroup) groupedActivity.push(currentGroup);
-
+                    // Uses Single Aggregated Feed
                     return (
                         <div className="activity-feed">
-                            {groupedActivity.length === 0 ? <p style={{ color: '#888' }}>No activity yet.</p> : groupedActivity.map((item, idx) => {
-                                let actionText = "";
-                                if (item.type === 'like_review') {
-                                    const isTargetMe = currentUser?.uid && item.targetUserId === currentUser.uid;
-                                    const targetName = isTargetMe ? "your" : `${item.targetUsername || 'user'}'s`;
-                                    actionText = ` liked ${targetName} review`;
-                                    // Ensure we don't treat this as an 'episode' action in the text, explicit about review.
-                                } else if (item.type === 'review') {
-                                    actionText = ' reviewed';
-                                } else if (item.type === 'watched') {
-                                    actionText = ' watched';
-                                } else if (item.type === 'liked') {
-                                    actionText = ' liked';
-                                } else if (item.type === 'selected_poster') {
-                                    // STRICT TEXT: "{username} customized the Season {X} poster"
-                                    // The user name is part of the header "You/User", so we just need the action part.
-                                    actionText = ` customized the Season ${item.seasonNumber} poster`;
-                                } else if (item.isGroup && item.episodeCount > 1) {
-                                    actionText = ` added Season ${item.seasonNumber} to watchlist`;
-                                } else {
-                                    actionText = ' added to watchlist';
-                                }
-
-                                return (
-                                    <div key={idx} className="activity-item">
-                                        <div className="activity-header">
-                                            <span className="user-text">{isOwnProfile ? 'You' : (user.username || 'User')}</span>
-                                            <span className="action-text">{actionText}</span>
-                                        </div>
-
-                                        <div className="activity-body">
-                                            {/* Large Clean Poster */}
-                                            <Link to={item.seasonNumber ? `/tv/${item.seriesId || item.id}/season/${item.seasonNumber}` : `/tv/${item.seriesId || item.id}`} className="activity-poster-wrapper">
-                                                <img src={`https://image.tmdb.org/t/p/w342${item.seasonPoster || item.poster_path}`} alt={item.name} />
-                                            </Link>
-
-                                            {/* External Metadata Area */}
-                                            <div className="activity-meta-col">
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
-                                                    <Link to={item.seasonNumber ? `/tv/${item.seriesId || item.id}/season/${item.seasonNumber}` : `/tv/${item.seriesId || item.id}`} style={{ fontWeight: '900', fontSize: '1.1rem', color: '#fff', textDecoration: 'none', lineHeight: 1.2 }}>
-                                                        {item.isGroup && item.episodeCount > 1
-                                                            ? (item.name.includes("Season") ? item.name : `${item.name} (Season ${item.seasonNumber})`)
-                                                            : item.name}
-                                                    </Link>
-                                                    <div style={{ textAlign: 'right', minWidth: '60px' }}>
-                                                        <div style={{ fontSize: '0.75rem', color: '#888', fontWeight: 'bold' }}>{formatDateShort(item.date)}</div>
-                                                        <div style={{ fontSize: '0.75rem', color: '#666' }}>{formatTime(item.date)}</div>
-                                                    </div>
-                                                </div>
-
-                                                <div style={{ marginTop: '5px', fontSize: '0.9rem', color: '#ccc', fontWeight: 'bold' }}>
-                                                    {item.isGroup && item.episodeCount > 1 ? (
-                                                        <span style={{ color: '#FFCC00' }}>{item.episodeCount} episodes</span>
-                                                    ) : (
-                                                        <>
-                                                            {(item.seasonNumber || item.isSeason) && <span>Season {item.seasonNumber}</span>}
-                                                            {(item.seasonNumber && item.episodeNumber) && <span> • </span>}
-                                                            {item.episodeNumber && <span>Ep {item.episodeNumber}</span>}
-                                                        </>
-                                                    )}
-                                                </div>
-
-                                                {item.rating && (
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '5px', color: '#F5C518', fontWeight: '900' }}>
-                                                        <MdStar size={16} /> <span>{item.rating}</span>
-                                                    </div>
-                                                )}
-
-                                                {item.type === 'review' && item.review && (
-                                                    <div className="activity-review-content">"{item.review}"</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                            <ActivityFeed userId={targetUid} feed={userActivityFeed} />
                         </div>
                     );
-
-                case 'Earned':
-                    return (
-                        <div className="earned-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '20px', padding: '10px 0' }}>
-                            {user.selectedPosters && Object.keys(user.selectedPosters).length > 0 ? (
-                                Object.entries(user.selectedPosters).map(([key, path]) => {
-                                    const [seriesId, seasonNum] = key.split('_');
-
-                                    // Find Series Name
-                                    const watchedItem = user.watched?.find(w => String(w.seriesId || w.id) === String(seriesId));
-                                    const starItem = !watchedItem ? user.starSeries?.find(s => String(s.id) === String(seriesId)) : null;
-                                    const reviewItem = (!watchedItem && !starItem) ? user.reviews?.find(r => String(r.tmdbId) === String(seriesId)) : null;
-                                    const seriesName = watchedItem?.name || watchedItem?.seriesName || starItem?.name || reviewItem?.name || "Series";
-                                    const displaySeason = seasonNum && seasonNum !== 'undefined' ? seasonNum : '?';
-
-                                    return (
-                                        <Link
-                                            key={key}
-                                            to={`/tv/${seriesId}/season/${displaySeason !== '?' ? displaySeason : 1}`}
-                                            style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}
-                                        >
-                                            <div style={{ position: 'relative', width: '100%', aspectRatio: '2/3', borderRadius: '12px', overflow: 'hidden', border: '1px solid #333' }}>
-                                                <img
-                                                    src={`https://image.tmdb.org/t/p/w342${path}`}
-                                                    alt="Earned Poster"
-                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                />
-                                                {/* Season Badge INSIDE Poster */}
-                                                <div style={{
-                                                    position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)',
-                                                    background: '#FFD600', color: '#000',
-                                                    fontSize: '0.65rem', padding: '3px 8px', borderRadius: '8px',
-                                                    fontWeight: '800', whiteSpace: 'nowrap', boxShadow: '0 2px 5px rgba(0,0,0,0.5)'
-                                                }}>
-                                                    SEASON {displaySeason}
-                                                </div>
-                                            </div>
-
-                                            {/* Series Name BELOW Poster */}
-                                            <div style={{
-                                                color: '#fff', fontSize: '0.85rem', fontWeight: 'bold',
-                                                textAlign: 'center', lineHeight: '1.2',
-                                                maxWidth: '100%', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
-                                            }}>
-                                                {seriesName}
-                                            </div>
-                                        </Link>
-                                    );
-                                })
-                            ) : (
-                                <p style={{ color: '#888', gridColumn: '1 / -1', textAlign: 'center', marginTop: '40px' }}>No earned posters yet.</p>
-                            )}
-                        </div>
-                    );
-
                 case 'Watchlist':
                 case 'Liked':
                     if (activeTab === 'Liked') {
                         return (
                             <div className="watchlist-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', padding: '10px' }}>
                                 {likes.filter(i => i.type !== 'like_review').map(item => (
-                                    <div key={item.id} style={{ position: 'relative', paddingTop: starSeriesIds.has(item.seriesId || item.id) ? '0' : '0', paddingLeft: '0' }}>
-                                        <Link to={item.seasonNumber ? `/tv/${item.seriesId || item.id}/season/${item.seasonNumber}` : `/tv/${item.seriesId || item.id}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative', overflow: 'visible' }}>
-
-                                            <img src={`https://image.tmdb.org/t/p/w500${resolvePoster(user, item.seriesId || item.id, item.seasonNumber, item.seasonPoster || item.poster_path)}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+                                    <div key={item.id} style={{ position: 'relative', paddingTop: starSeriesIds.has(item.tmdbId || item.id) ? '0' : '0', paddingLeft: '0' }}>
+                                        <Link to={item.seasonNumber ? `/tv/${item.tmdbId}/season/${item.seasonNumber}` : `/tv/${item.tmdbId}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative', overflow: 'visible' }}>
+                                            <img src={getResolvedPosterUrl(item.tmdbId, item.seasonPoster || item.poster_path, profilePosters, 'w500') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
                                         </Link>
                                     </div>
                                 ))}
@@ -877,7 +915,7 @@ const Profile = () => {
                                 if (item.type === 'basket') {
                                     return (
                                         <div key={idx} onClick={() => setBasketModalData(item)} style={{ cursor: 'pointer', display: 'block', width: '100%', border: '1px solid var(--border-color)', aspectRatio: '2/3', position: 'relative', overflow: 'hidden' }}>
-                                            <img src={`https://image.tmdb.org/t/p/w500${resolvePoster(user, item.seriesId || item.id, item.seasonNumber, item.poster_path)}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+                                            <img src={getResolvedPosterUrl(item.tmdbId, item.poster_path, profilePosters, 'w500') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
                                             {/* Basket Badges */}
                                             <div className="diary-season-badge" style={{ top: '6px', right: '6px', fontSize: '0.8rem', padding: '4px 6px' }}>S{item.seasonNumber}</div>
                                             <div className="diary-eps-badge" style={{ bottom: '6px', right: '6px', fontSize: '0.75rem' }}>{item.episodeCount} EPS</div>
@@ -886,10 +924,12 @@ const Profile = () => {
                                 } else {
                                     // Whole Series
                                     return (
-                                        <div key={idx} style={{ position: 'relative', overflow: 'visible', paddingTop: starSeriesIds.has(item.seriesId || item.id) ? '20px' : '0', paddingLeft: starSeriesIds.has(item.seriesId || item.id) ? '20px' : '0' }}>
-                                            <Link to={`/tv/${item.seriesId || item.id}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative', overflow: 'visible' }}>
-
-                                                <img src={`https://image.tmdb.org/t/p/w500${resolvePoster(user, item.seriesId || item.id, item.seasonNumber, item.poster_path)}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+                                        <div key={idx} style={{ position: 'relative', overflow: 'visible', paddingTop: starSeriesIds.has(item.tmdbId) ? '20px' : '0', paddingLeft: starSeriesIds.has(item.tmdbId) ? '20px' : '0' }}>
+                                            <Link to={`/tv/${item.tmdbId}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative', overflow: 'visible' }}>
+                                                <img src={getResolvedPosterUrl(item.tmdbId, item.poster_path, profilePosters, 'w500') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+                                                {item.seasonNumber && (
+                                                    <div className="diary-season-badge" style={{ top: '6px', right: '6px', fontSize: '0.8rem', padding: '4px 6px' }}>S{item.seasonNumber}</div>
+                                                )}
                                             </Link>
                                         </div>
                                     );
@@ -904,23 +944,120 @@ const Profile = () => {
         return <div key={activeTab} className="slide-content-anim">{content}</div>;
     };
 
-    return (
-        <div
-            className="profile-wrapper"
-            style={{ width: '70%', margin: '0 auto', maxWidth: '1400px', padding: '2rem 0', color: 'var(--text-primary)', position: 'relative' }}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-        >
-            {refreshing && (
-                <div style={{ position: 'fixed', top: '20%', left: '50%', transform: 'translateX(-50%)', zIndex: 9999 }}>
-                    <div className="loading-circle" style={{ width: '40px', height: '40px', border: '4px solid #333', borderTop: '4px solid #FFCC00', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-                    <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-                </div>
-            )}
+    if (pageLoading && !user) {
+        return (
+            <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                <ButtonLoader size="40px" color="var(--accent-color)" />
+            </div>
+        );
+    }
 
-            <style>
-                {`
+    return (
+        <div style={{ paddingBottom: '80px', minHeight: '100vh', background: '#000' }}>
+            {/* Banner Section */}
+            <div
+                className="profile-banner-container"
+                onClick={handleBannerClick}
+                style={{
+                    width: '100%',
+                    aspectRatio: '3.5/1', // Twitter-like ultra wide
+                    maxHeight: '400px',
+                    minHeight: '180px',
+                    background: user?.bannerBackdropPath
+                        ? `url(https://image.tmdb.org/t/p/w1280${user?.bannerBackdropPath}) center center/cover no-repeat`
+                        : '#1a1a1a', // Dark clean grey if empty
+                    position: 'relative',
+                    cursor: 'pointer',
+                    marginBottom: '-80px', // Avatar overlap
+                    maskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)',
+                    WebkitMaskImage: 'linear-gradient(to bottom, black 60%, transparent 100%)'
+                }}
+            >
+                {/* Mobile Responsive Style Injection */}
+                <style>{`
+                    @media (max-width: 768px) {
+                        .profile-banner-container {
+                            aspect-ratio: 2.2/1 !important; /* Taller on mobile to show more height/faces */
+                            min-height: 180px !important;
+                            margin-bottom: -60px !important;
+                        }
+                    }
+                `}</style>
+
+                {!user?.bannerBackdropPath && isOwnProfile && (
+                    <div style={{
+                        position: 'absolute',
+                        top: '40%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        textAlign: 'center',
+                        color: '#666',
+                        zIndex: 2,
+                        pointerEvents: 'none' // Click passes to container
+                    }}>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '5px' }}>Add profile banner</div>
+                        <div style={{ fontSize: '0.9rem' }}>Choose from your favorite series</div>
+                    </div>
+                )}
+
+                {/* Gradient Overlay for Readability - ALWAYS */}
+                <div style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    background: 'linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%)',
+                    pointerEvents: 'none'
+                }} />
+
+                {/* REMOVED: Edit Button/Badge */}
+            </div>
+
+            <div
+                className="profile-wrapper"
+                style={{ width: '90%', margin: '0 auto', maxWidth: '1200px', padding: '2rem 0', color: 'var(--text-primary)', position: 'relative', zIndex: 10 }}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+            >
+                {(refreshing || pullProgress > 0) && (
+                    <div style={{
+                        position: 'fixed',
+                        top: `calc(var(--safe-top) + ${70 + (pullProgress * 40)}px)`,
+                        left: '50%',
+                        transform: `translateX(-50%)`,
+                        zIndex: 9999,
+                        background: 'rgba(26,26,26,0.95)',
+                        padding: '12px',
+                        borderRadius: '50%',
+                        backdropFilter: 'blur(8px)',
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                        border: '1px solid #333',
+                        opacity: refreshing ? 1 : pullProgress,
+                        transition: pullProgress > 0 ? 'none' : 'all 0.3s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                    }}>
+                        <div
+                            className={refreshing ? "loading-circle" : ""}
+                            style={{
+                                width: '24px',
+                                height: '24px',
+                                border: '3px solid #333',
+                                borderTop: '3px solid #FFCC00',
+                                borderRadius: '50%',
+                                animation: refreshing ? 'spin 0.8s linear infinite' : 'none',
+                                transform: refreshing ? 'none' : `rotate(${pullProgress * 360}deg)`
+                            }}
+                        />
+                        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+                    </div>
+                )}
+
+                <style>
+                    {`
                 .profile-header-grid { display: grid; grid-template-columns: auto 1fr; column-gap: 2rem; row-gap: 1.5rem; margin-bottom: 2rem; position: relative; }
                 .collapsible-header-content { grid-column: 1 / 3; display: flex; gap: 2rem; transition: max-height 0.5s ease, opacity 0.4s ease; max-height: 500px; opacity: 1; overflow: hidden; }
                 .collapsible-header-content.collapsed { max-height: 0; opacity: 0; margin-bottom: 0; }
@@ -935,7 +1072,7 @@ const Profile = () => {
                     text-transform: uppercase;
                     cursor: pointer;
                     border: 2px solid; /* Square border styling handled by border-radius 0 default or explicit */
-                    border-radius: 0px; 
+                    border-radius: 0px;
                     transition: all 0.2s ease;
                 }
                 .follow-btn.not-following {
@@ -956,9 +1093,10 @@ const Profile = () => {
                 .stats-number { font-size: 1.2rem; font-weight: 900; color: #FFFFFF; }
                 .stats-label { font-size: 0.75rem; font-weight: bold; color: #FFFFFF; letter-spacing: 1px; white-space: nowrap; margin-top: 2px; }
                 .profile-bio { color: var(--text-secondary); font-size: 0.95rem; line-height: 1.4; max-width: 500px; white-space: pre-wrap; }
-                
-                .nav-scroll-container { display: flex; overflow-x: auto; white-space: nowrap; scrollbar-width: none; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); margin-bottom: 2rem; margin-top: 1rem; }
-                .nav-tab-btn { padding: 15px 25px; font-size: 1rem; background: transparent; border: none; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
+
+                .nav-scroll-container { display: flex; overflow-x: auto; white-space: nowrap; scrollbar-width: none; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); margin-bottom: 2rem; margin-top: 1rem; width: 100%; -webkit-overflow-scrolling: touch; }
+                .nav-scroll-container::-webkit-scrollbar { display: none; }
+                .nav-tab-btn { padding: 15px 25px; font-size: 1rem; background: transparent; border: none; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
 
                 /* Favorites */
                 .favorites-grid { display: flex; gap: 15px; }
@@ -977,12 +1115,75 @@ const Profile = () => {
                 @keyframes slideInRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
 
                 /* Diary Badges */
-                .diary-scroll-container { display: flex; gap: 15px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 20px; width: 100%; flex-wrap: nowrap; }
-                .diary-item { width: 160px; flex-shrink: 0; position: relative; }
-                .diary-date-badge { position: absolute; top: 6px; left: 6px; background: #000; border: 1px solid #333; borderRadius: 4px; textAlign: center; minWidth: 32px; padding: 4px 2px; boxShadow: 0 2px 5px rgba(0,0,0,0.5); zIndex: 20; color: #fff; }
-                .diary-eps-badge { position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,0.8); color: #fff; padding: 2px 6px; borderRadius: 4px; fontSize: 0.65rem; fontWeight: bold; border: 1px solid rgba(255,255,255,0.2); }
-                .diary-season-badge { position: absolute; top: 6px; right: 6px; background: black; color: white; padding: 2px 4px; fontSize: 0.65rem; fontWeight: bold; zIndex: 6; borderRadius: 2px; }
-                .diary-rating-badge { position: absolute; bottom: 6px; left: 6px; background: rgba(0,0,0,0.8); color: #FFCC00; padding: 2px 4px; borderRadius: 4px; fontSize: 0.7rem; display: flex; alignItems: center; gap: 2px; fontWeight: bold; zIndex: 5; }
+                /* NEW DIARY GRID STYLES */
+                .diary-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr; /* 2 Column Mobile First */
+                    gap: 15px;
+                }
+
+                .diary-card {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .diary-poster-container {
+                    display: block;
+                    width: 100%;
+                    aspect-ratio: 2/3;
+                    border-radius: 14px;
+                    overflow: hidden;
+                    position: relative;
+                    background: #222; /* Loading placeholder */
+                }
+
+                .diary-poster-container img {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                }
+
+                /* DATE BADGE ON POSTER */
+                .diary-poster-date {
+                    position: absolute;
+                    bottom: 8px;
+                    right: 8px;
+                    background: rgba(0, 0, 0, 0.65);
+                    backdrop-filter: blur(4px);
+                    color: white;
+                    padding: 4px 8px;
+                    border-radius: 6px;
+                    font-size: 0.75rem;
+                    font-family: inherit;
+                    font-weight: 800;
+                    letter-spacing: 0.5px;
+                    z-index: 5;
+                    pointer-events: none;
+                }
+
+                .diary-info {
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .diary-title {
+                    color: #fff;
+                    font-weight: bold;
+                    font-size: 0.95rem;
+                    line-height: 1.2;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    display: -webkit-box;
+                    -webkit-line-clamp: 1;
+                    -webkit-box-orient: vertical;
+                }
+
+                .diary-season {
+                    color: #888;
+                    font-size: 0.85rem;
+                    margin-top: 2px;
+                }
 
                 /* ACTIVITY FEED STYLES */
                 .activity-feed { display: flex; flex-direction: column; gap: 30px; }
@@ -991,11 +1192,11 @@ const Profile = () => {
                 .user-text { fontWeight: bold; color: #fff; }
                 .action-text { color: #888; }
                 .activity-title { fontWeight: 900; color: #fff; text-decoration: none; font-size: 1.1rem; }
-                
+
                 .activity-body { display: flex; gap: 20px; align-items: flex-start; }
                 .activity-poster-wrapper { width: 110px; aspect-ratio: 2/3; position: relative; flex-shrink: 0; border-radius: 4px; overflow: hidden; display: block; }
                 .activity-poster-wrapper img { width: 100%; height: 100%; object-fit: cover; }
-                
+
                 .activity-meta-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
                 .activity-review-content { background: #111; padding: 15px; border-radius: 6px; color: #ccc; font-size: 0.95rem; line-height: 1.5; margin-top: 10px; position: relative; }
                 .activity-review-content::before { content: ''; position: absolute; left: -6px; top: 15px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-right: 6px solid #111; }
@@ -1013,21 +1214,21 @@ const Profile = () => {
 
                 @media (max-width: 768px) {
                     .profile-wrapper { width: 95% !important; padding: 1rem !important; }
-                    
+
                     /* Mobile Header Grid - 3 Rows */
-                    .collapsible-header-content { 
-                        display: grid; 
-                        grid-template-columns: auto 1fr; 
-                        column-gap: 15px; 
+                    .collapsible-header-content {
+                        display: grid;
+                        grid-template-columns: auto 1fr;
+                        column-gap: 15px;
                         row-gap: 10px; /* Gap between rows */
                         max-height: 1000px; /* Allow expansion */
                     }
 
                     /* 1. Avatar (Top Left) */
-                    .profile-avatar-area { 
-                        grid-column: 1; 
-                        grid-row: 1; 
-                        width: 90px; 
+                    .profile-avatar-area {
+                        grid-column: 1;
+                        grid-row: 1;
+                        width: 90px;
                         margin-bottom: 0;
                     }
 
@@ -1048,7 +1249,7 @@ const Profile = () => {
                         grid-row: 2;
                         width: 100%;
                         display: grid;
-                        grid-template-columns: repeat(4, 1fr); /* Force 4 equal columns */
+                        grid-template-columns: repeat(3, 1fr); /* Adjusted to 3 cols */
                         justify-items: center;
                         align-items: center;
                         margin-top: 10px;
@@ -1067,11 +1268,11 @@ const Profile = () => {
                     }
 
                     .profile-username { font-size: 1.5rem; }
-                    
-                    .diary-item { width: 140px; } 
+
+
                     .activity-poster-wrapper { width: 80px; }
                     .activity-title { font-size: 1rem; }
-                    
+
                     .favorites-grid { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 20px; scroll-interval: 150px; }
                     .favorite-box { width: 110px; }
                     .pfp-full-img-container { width: 70vw !important; height: 70vw !important; max-width: 300px !important; max-height: 300px !important; }
@@ -1092,125 +1293,163 @@ const Profile = () => {
                 .basket-list { display: flex; flex-direction: column; gap: 10px; }
                 .basket-item { display: flex; gap: 15px; align-items: center; background: #000; padding: 10px; border: 1px solid #333; border-radius: 0px; } /* Pure Black & Square */
                 .basket-img-wrapper { width: 60px; height: 60px; border: 1px solid #333; position: relative; display: flex; alignItems: center; justifyContent: center; flex-shrink: 0; background: #222; overflow: hidden; }
-                .basket-img-wrapper img { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; } 
+                .basket-img-wrapper img { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; }
                 .remove-watchlist-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: transparent; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
                 .basket-info-col { display: flex; flex-direction: column; justify-content: center; }
                 .ep-title { font-weight: 900; color: #fff; font-size: 1rem; line-height: 1.2; }
                 `}
-            </style>
+                </style>
 
-            {editImageSrc && <ImageCropper imageSrc={editImageSrc} onCancel={() => setEditImageSrc(null)} onSave={handleSaveCropped} />}
-            {showFullPFP && profilePhoto && (
-                <div className="pfp-full-modal" onClick={() => setShowFullPFP(false)}>
-                    <div className="pfp-full-img-container" onClick={e => e.stopPropagation()}>
-                        <img src={profilePhoto} alt="Full Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </div>
-                    <button style={{ position: 'absolute', top: 20, right: 20, background: 'transparent', color: '#fff', border: 'none', fontSize: '2rem' }}><MdClose /></button>
-                </div>
-            )}
-
-            {/* BASKET MODAL */}
-            {basketModalData && (
-                <div className="basket-modal-overlay" onClick={() => setBasketModalData(null)}>
-                    <div className="basket-modal-content" onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                            <div className="basket-header" style={{ marginBottom: 0 }}>SEASON {basketModalData.seasonNumber}</div>
-                            <button onClick={() => setBasketModalData(null)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.5rem', cursor: 'pointer' }}><MdClose /></button>
+                {editImageSrc && <ImageCropper imageSrc={editImageSrc} onCancel={() => setEditImageSrc(null)} onSave={handleSaveCropped} />}
+                {showFullPFP && profilePhoto && (
+                    <div className="pfp-full-modal" onClick={() => setShowFullPFP(false)}>
+                        <div className="pfp-full-img-container" onClick={e => e.stopPropagation()}>
+                            <img src={profilePhoto} alt="Full Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </div>
-
-                        <div className="basket-list">
-                            {basketModalData.episodes.map(ep => {
-                                let cleanTitle = ep.name;
-                                if (cleanTitle.includes(': ')) cleanTitle = cleanTitle.split(': ').pop();
-                                return (
-                                    <div key={ep.id} className="basket-item">
-                                        <div className="basket-img-wrapper">
-                                            <img src={`https://image.tmdb.org/t/p/w200${ep.still_path || ep.poster_path}`} alt="Ep" />
-                                            <button className="remove-watchlist-btn" onClick={() => handleRemoveFromWatchlist(ep)}>
-                                                <MdCheck color="var(--accent-color)" />
-                                            </button>
-                                        </div>
-                                        <div className="basket-info-col">
-                                            <div className="ep-title">{cleanTitle}</div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            <div className="profile-header-grid" style={{ minHeight: isCollapsed ? '0px' : 'auto' }}>
-                <div className={`collapsible-header-content ${isCollapsed ? 'collapsed' : ''}`}>
-                    <div className="profile-avatar-area">
-                        <div onClick={() => setShowFullPFP(true)} style={{ width: '100%', aspectRatio: '1/1', borderRadius: '50%', overflow: 'hidden', border: '2px solid var(--accent-color)', background: 'var(--bg-tertiary)', cursor: 'pointer' }}>
-                            {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', color: '#555' }}>{user.username ? user.username[0].toUpperCase() : 'U'}</div>}
-                        </div>
-                        <div className="social-icons">
-                            {user.instaLink && <a href={user.instaLink} target="_blank" rel="noopener noreferrer" className="social-icon-link"><FaInstagram /></a>}
-                            {user.twitterLink && <a href={user.twitterLink} target="_blank" rel="noopener noreferrer" className="social-icon-link"><FaTwitter /></a>}
-                            {!user.instaLink && !user.twitterLink && <div style={{ display: 'flex', gap: 10 }}><FaInstagram className="social-icon-link" /><FaTwitter className="social-icon-link" /></div>}
-                        </div>
-                    </div>
-                    <div className="profile-details-area">
-                        <div className="user-info-row" style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-                            <h1 className="profile-username">{user.username || 'User'}</h1>
-                            {!isOwnProfile && (
-                                <button
-                                    onClick={handleFollowToggle}
-                                    className={`follow-btn ${isFollowing ? 'following' : 'not-following'}`}
-                                    style={{ fontSize: '0.8rem', padding: '6px 16px' }}
-                                >
-                                    {isFollowing ? 'UNFOLLOW' : 'FOLLOW'}
-                                </button>
-                            )}
-                        </div>
-
-                        <div className="stats-container">
-                            <div className="stats-div" style={{ textAlign: 'center' }}><div className="stats-number">{stats.totalSeasons || 0}</div><div className="stats-label">SEASONS</div></div>
-                            <div className="stats-div" style={{ textAlign: 'center' }}><div className="stats-number">{stats.thisYear}</div><div className="stats-label">THIS YEAR</div></div>
-                            <Link to={`/profile/${targetUid}/followers`} className="stats-div" style={{ textAlign: 'center', textDecoration: 'none', cursor: 'pointer' }}>
-                                <div className="stats-number">{stats.followers}</div>
-                                <div className="stats-label">FOLLOWERS</div>
-                            </Link>
-                            <Link to={`/profile/${targetUid}/following`} className="stats-div" style={{ textAlign: 'center', textDecoration: 'none', cursor: 'pointer' }}>
-                                <div className="stats-number">{stats.following}</div>
-                                <div className="stats-label">FOLLOWING</div>
-                            </Link>
-                        </div>
-                        <style>{`
-                            @media (max-width: 768px) {
-                                .stats-label { font-size: 0.55rem !important; letter-spacing: 0px !important; }
-                                .stats-number { font-size: 1rem !important; } 
-                            }
-                        `}</style>
-                        {user.bio && <div className="profile-bio">{user.bio}</div>}
-                    </div>
-                </div>
-                {isOwnProfile && (
-                    <div className={`profile-actions-animated ${isCollapsed ? 'collapsed-menu' : ''}`} ref={menuRef}>
-                        <button onClick={() => setShowMenu(!showMenu)} style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1.5rem', padding: '5px' }}><MdMoreVert /></button>
-                        {showMenu && (
-                            <div className="menu-dropdown">
-                                <label className="menu-item" style={{ cursor: 'pointer' }}>Edit Profile PFP<input type="file" hidden onChange={handleFileSelect} accept="image/*" /></label>
-                                <button className="menu-item" onClick={() => navigate('/edit-profile')}>Edit Profile Details</button>
-                                <button className="menu-item" onClick={() => navigate('/settings')}>Settings</button>
-                            </div>
-                        )}
+                        <button style={{ position: 'absolute', top: 20, right: 20, background: 'transparent', color: '#fff', border: 'none', fontSize: '2rem' }}><MdClose /></button>
                     </div>
                 )}
+
+                {/* BASKET MODAL */}
+                {basketModalData && (
+                    <div className="basket-modal-overlay" onClick={() => setBasketModalData(null)}>
+                        <div className="basket-modal-content" onClick={e => e.stopPropagation()}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                <div className="basket-header" style={{ marginBottom: 0 }}>SEASON {basketModalData.seasonNumber}</div>
+                                <button onClick={() => setBasketModalData(null)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.5rem', cursor: 'pointer' }}><MdClose /></button>
+                            </div>
+
+                            <div className="basket-list">
+                                {basketModalData.episodes.map(ep => {
+                                    let cleanTitle = ep.name;
+                                    if (cleanTitle.includes(': ')) cleanTitle = cleanTitle.split(': ').pop();
+                                    return (
+                                        <div key={ep.id} className="basket-item">
+                                            <div className="basket-img-wrapper">
+                                                <img src={`https://image.tmdb.org/t/p/w200${ep.still_path || ep.poster_path}`} alt="Ep" />
+                                                <button className="remove-watchlist-btn" onClick={() => handleRemoveFromWatchlist(ep)}>
+                                                    <MdCheck color="var(--accent-color)" />
+                                                </button>
+                                            </div>
+                                            <div className="basket-info-col">
+                                                <div className="ep-title">{cleanTitle}</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="profile-header-grid" style={{ minHeight: isCollapsed ? '0px' : 'auto' }}>
+                    <div className={`collapsible-header-content ${isCollapsed ? 'collapsed' : ''}`}>
+                        <div className="profile-avatar-area">
+                            <div onClick={() => setShowFullPFP(true)} style={{ width: '100%', aspectRatio: '1/1', borderRadius: '50%', overflow: 'hidden', border: '2px solid var(--accent-color)', background: 'var(--bg-tertiary)', cursor: 'pointer' }}>
+                                {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', color: '#555' }}>{(user?.username || 'U')[0].toUpperCase()}</div>}
+                            </div>
+                            <div className="social-icons">
+                                {user?.instaLink && <a href={user?.instaLink} target="_blank" rel="noopener noreferrer" className="social-icon-link"><FaInstagram /></a>}
+                                {user?.twitterLink && <a href={user?.twitterLink} target="_blank" rel="noopener noreferrer" className="social-icon-link"><FaTwitter /></a>}
+                                {!user?.instaLink && !user?.twitterLink && <div style={{ display: 'flex', gap: 10 }}><FaInstagram className="social-icon-link" /><FaTwitter className="social-icon-link" /></div>}
+                            </div>
+                        </div>
+                        <div className="profile-details-area">
+                            <div className="user-info-row" style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                                <h1 className="profile-username">{user?.username || 'User'}</h1>
+                                {!isOwnProfile && (
+                                    <button
+                                        onClick={handleFollowToggle}
+                                        className={`follow-btn ${isFollowing ? 'following' : 'not-following'}`}
+                                        style={{ fontSize: '0.8rem', padding: '6px 16px', minWidth: '85px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                        disabled={followLoading}
+                                    >
+                                        {followLoading ? <ButtonLoader size="14px" color={isFollowing ? "#fff" : "#000"} /> : (isFollowing ? 'UNFOLLOW' : 'FOLLOW')}
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="stats-container">
+                                <div className="stats-div" style={{ textAlign: 'center' }}><div className="stats-number">{stats.thisYear}</div><div className="stats-label">THIS YEAR</div></div>
+                                <Link to={`/profile/${targetUid}/followers`} className="stats-div" style={{ textAlign: 'center', textDecoration: 'none', cursor: 'pointer' }}>
+                                    <div className="stats-number">{stats.followers}</div>
+                                    <div className="stats-label">FOLLOWERS</div>
+                                </Link>
+                                <Link to={`/profile/${targetUid}/following`} className="stats-div" style={{ textAlign: 'center', textDecoration: 'none', cursor: 'pointer' }}>
+                                    <div className="stats-number">{stats.following}</div>
+                                    <div className="stats-label">FOLLOWING</div>
+                                </Link>
+                            </div>
+                            <style>{`
+                            @media (max-width: 768px) {
+                                .stats-label { font-size: 0.55rem !important; letter-spacing: 0px !important; }
+                                .stats-number { font-size: 1rem !important; }
+                            }
+                        `}</style>
+                            {user?.bio && <div className="profile-bio">{user?.bio}</div>}
+                        </div>
+                    </div>
+                    {isOwnProfile && (
+                        <div className={`profile-actions-animated ${isCollapsed ? 'collapsed-menu' : ''}`} ref={menuRef}>
+                            <button onClick={() => setShowMenu(!showMenu)} style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '1.5rem', padding: '5px' }}><MdMoreVert /></button>
+                            {showMenu && (
+                                <div className="menu-dropdown">
+                                    <label className="menu-item" style={{ cursor: 'pointer' }}>Edit Profile PFP<input type="file" hidden onChange={handleFileSelect} accept="image/*" /></label>
+                                    <button className="menu-item" onClick={() => navigate('/edit-profile')}>Edit Profile Details</button>
+                                    <button className="menu-item" onClick={() => navigate('/settings')}>Settings</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="nav-scroll-container hide-scrollbar">
+                    {['Profile', 'Diary', 'Activity', 'Watchlist', 'Liked'].map(tab => (
+                        <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'Activity') { setHasNewActivity(false); if (userActivityFeed[0]) localStorage.setItem(`lastSeenActivity_${currentUser.uid}`, userActivityFeed[0]?.createdAt); } }} className="nav-tab-btn" style={{ position: 'relative', color: activeTab === tab ? '#FFFFFF' : 'var(--text-muted)', fontWeight: activeTab === tab ? 'bold' : 'normal', borderBottom: activeTab === tab ? '3px solid var(--accent-color)' : '3px solid transparent' }}>
+                            {tab}
+                            {tab === 'Diary' && <MobileIndicator id="diary-tab-tip" message="Your watch history 📖" position="bottom" />}
+                            {tab === 'Activity' && hasNewActivity && <div style={{ position: 'absolute', top: '10px', right: '10px', width: '8px', height: '8px', background: '#FF4136', borderRadius: '50%' }}></div>}
+                        </button>
+                    ))}
+                </div>
+
+                <main style={{ minHeight: '400px' }}>{renderTabContent()}</main>
             </div>
 
-            <nav className="nav-scroll-container">
-                {['Profile', 'Diary', 'Activity', 'Earned', 'Watchlist', 'Liked'].map(tab => (
-                    <button key={tab} onClick={() => setActiveTab(tab)} className="nav-tab-btn" style={{ color: activeTab === tab ? '#FFFFFF' : 'var(--text-muted)', fontWeight: activeTab === tab ? 'bold' : 'normal', borderBottom: activeTab === tab ? '3px solid var(--accent-color)' : '3px solid transparent' }}>
-                        {tab}
-                    </button>
-                ))}
-            </nav>
+            {/* Modals */}
+            {editImageSrc && <ImageCropper imageSrc={editImageSrc} onCancel={() => setEditImageSrc(null)} onSave={handleSaveCropped} />}
+            {showFullPFP && <div className="full-pfp-modal" onClick={() => setShowFullPFP(false)}><img src={profilePhoto} alt="Full PFP" /></div>}
 
-            <main style={{ minHeight: '400px' }}>{renderTabContent()}</main>
+            {/* Banner Modals */}
+            {showBannerSearch && (
+                <BannerSearch
+                    onClose={() => setShowBannerSearch(false)}
+                    onSelectSeries={handleSeriesForBanner}
+                />
+            )}
+            {showBannerSelection && selectedBannerSeries && (
+                <BannerSelection
+                    series={selectedBannerSeries}
+                    onClose={() => setShowBannerSelection(false)}
+                    onBack={() => { setShowBannerSelection(false); setShowBannerSearch(true); }}
+                    onSelectSeries={(s) => setSelectedBannerSeries(s)}
+                />
+            )}
+            {showBannerView && user?.bannerBackdropPath && (
+                <BannerViewModal
+                    src={`https://image.tmdb.org/t/p/original${user?.bannerBackdropPath}`}
+                    onClose={() => setShowBannerView(false)}
+                />
+            )}
+            {showBannerAction && (
+                <BannerActionModal
+                    onClose={() => setShowBannerAction(false)}
+                    onSearch={() => { setShowBannerAction(false); setShowBannerSearch(true); }}
+                    lastUpdated={user?.bannerUpdatedAt}
+                />
+            )}
+
+
         </div >
     );
 };

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { db } from '../firebase-config';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { useLoading } from '../context/LoadingContext';
+import { doc, getDoc } from 'firebase/firestore';
 import { MdArrowBack, MdPerson } from 'react-icons/md';
 
 const Following = () => {
@@ -10,9 +11,11 @@ const Following = () => {
     const [displayedUsers, setDisplayedUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
+    const { stopLoading } = useLoading();
     const BATCH_SIZE = 20;
 
     useEffect(() => {
+        let isMounted = true;
         const fetchFollowing = async () => {
             if (!uid) return;
             try {
@@ -37,14 +40,17 @@ const Following = () => {
 
                     setAllIds(ids);
 
-                    if (ids.length > 0) {
+                    if (ids.length > 0 && isMounted) {
                         await fetchBatch(ids.slice(0, BATCH_SIZE));
                     }
                 }
             } catch (error) {
                 console.error("Error fetching following:", error);
             } finally {
-                setLoading(false);
+                if (isMounted) {
+                    setLoading(false);
+                    stopLoading();
+                }
             }
         };
 
@@ -54,13 +60,21 @@ const Following = () => {
         setLoading(true);
 
         fetchFollowing();
+
+        return () => {
+            isMounted = false;
+        };
     }, [uid]);
 
     const fetchBatch = async (batchIds) => {
         const promises = batchIds.map(id => getDoc(doc(db, 'users', id)));
         const docs = await Promise.all(promises);
         const users = docs.map(d => d.exists() ? { id: d.id, ...d.data() } : null).filter(u => u);
-        setDisplayedUsers(prev => [...prev, ...users]);
+        setDisplayedUsers(prev => {
+            const existingIds = new Set(prev.map(u => u.id));
+            const newUsers = users.filter(u => !existingIds.has(u.id));
+            return [...prev, ...newUsers];
+        });
     };
 
     const handleLoadMore = async () => {
@@ -78,7 +92,7 @@ const Following = () => {
                 <h1 style={{ fontSize: '1.5rem', fontWeight: '900', margin: 0 }}>Following</h1>
             </div>
 
-            {loading ? <p>Loading...</p> : (
+            {loading ? null : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                     {displayedUsers.map(user => (
                         <Link key={user.id} to={`/profile/${user.id}`} style={{ display: 'flex', alignItems: 'center', gap: '15px', textDecoration: 'none', color: '#fff', padding: '10px', background: '#111', border: '1px solid #333' }}>
@@ -88,7 +102,7 @@ const Following = () => {
                             <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user.username || user.email?.split('@')[0]}</div>
                         </Link>
                     ))}
-                    {displayedUsers.length === 0 && <p style={{ color: '#888' }}>No users followed.</p>}
+                    {displayedUsers.length === 0 && <p style={{ color: '#FFD600' }}>No users followed.</p>}
 
                     {/* Load More Button */}
                     {displayedUsers.length < allIds.length && (

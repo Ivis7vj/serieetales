@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { useScrollLock } from '../hooks/useScrollLock';
 import { MdStar, MdStarHalf, MdStarBorder, MdClose } from 'react-icons/md';
 
-const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, initialReview = '', modalTitle }) => {
+const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, initialReview = '', modalTitle, posterPath }) => {
     const [rating, setRating] = useState(initialRating);
     const [review, setReview] = useState(initialReview);
     const [hoverRating, setHoverRating] = useState(0);
@@ -44,12 +45,13 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
     };
 
     const renderStar = (star) => {
-        const isFull = (hoverRating || rating) >= star;
-        const isHalf = (hoverRating || rating) >= star - 0.5 && (hoverRating || rating) < star;
+        const ratingVal = parseFloat(rating);
+        const isFull = (hoverRating || ratingVal) >= star;
+        const isHalf = (hoverRating || ratingVal) >= star - 0.5 && (hoverRating || ratingVal) < star;
 
-        if (isHalf) return <MdStarHalf size={36} />;
-        if (isFull) return <MdStar size={36} />;
-        return <MdStarBorder size={36} />;
+        if (isHalf) return <MdStarHalf size={36} color="#FFCC00" />;
+        if (isFull) return <MdStar size={36} color="#FFCC00" />;
+        return <MdStarBorder size={36} color="#444" />;
     };
 
     const handleSubmit = (e) => {
@@ -63,15 +65,14 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
         }, 1500);
     };
 
+    useScrollLock(isOpen);
+
+
     // ... (success view)
 
     return (
-        <div style={{
-            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 10000, backdropFilter: 'blur(4px)', padding: '20px'
-        }}>
-            <div style={{
+        <div className="modal-overlay">
+            <div className="modal-content" style={{
                 background: '#191919', // Prime Dark
                 padding: '30px',
                 borderRadius: '8px',
@@ -80,7 +81,8 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
                 border: 'none',
                 position: 'relative',
                 boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-                fontFamily: '"Amazon Ember", Arial, sans-serif'
+                fontFamily: '"Amazon Ember", Arial, sans-serif',
+                margin: '20px', // Ensure margin on small screens
             }}>
                 <button
                     onClick={onClose}
@@ -89,10 +91,22 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
                     <MdClose size={24} />
                 </button>
 
-                <h2 style={{ color: '#ffffff', marginTop: 0, marginBottom: '1.5rem', fontFamily: '"Amazon Ember", Arial, sans-serif', fontSize: '1.2rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    {modalTitle || (initialReview ? 'Edit Review:' : 'Review')} {movieName}
-                    <span style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginTop: '5px', fontWeight: 'normal', textTransform: 'none' }}>(Click star again for half)</span>
-                </h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '1.5rem' }}>
+                    {posterPath && (
+                        <img
+                            src={`https://image.tmdb.org/t/p/w92${posterPath}`}
+                            alt={movieName}
+                            style={{ width: '60px', height: '90px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.5)' }}
+                        />
+                    )}
+                    <div>
+                        <h2 style={{ color: '#ffffff', marginTop: 0, marginBottom: '5px', fontFamily: '"Amazon Ember", Arial, sans-serif', fontSize: '1.2rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            {modalTitle || (initialReview ? 'Edit Review:' : 'Review')}
+                        </h2>
+                        <div style={{ fontSize: '1rem', color: '#ccc', fontWeight: 'bold' }}>{movieName}</div>
+                        <span style={{ fontSize: '0.8rem', color: '#888', display: 'block', marginTop: '5px', fontWeight: 'normal', textTransform: 'none' }}>(Click star again for half)</span>
+                    </div>
+                </div>
 
                 <form onSubmit={handleSubmit}>
                     <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
@@ -100,13 +114,10 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
                             {[1, 2, 3, 4, 5].map((star) => (
                                 <div
                                     key={star}
+                                    onMouseEnter={() => setHoverRating(star)}
+                                    onMouseLeave={() => setHoverRating(0)}
                                     onClick={() => handleStarClick(star)}
-                                    style={{
-                                        cursor: 'pointer',
-                                        color: (hoverRating || rating) >= star - 0.5 ? '#FFCC00' : '#444',
-                                        transition: 'color 0.2s',
-                                        display: 'flex'
-                                    }}
+                                    style={{ cursor: 'pointer', display: 'flex' }}
                                 >
                                     {renderStar(star)}
                                 </div>
@@ -158,8 +169,8 @@ const ReviewModal = ({ isOpen, onClose, onSubmit, movieName, initialRating = 5, 
                         {initialReview ? 'Update Review' : 'Post Review'}
                     </button>
                 </form>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 };
 

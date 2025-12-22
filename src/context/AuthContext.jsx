@@ -7,10 +7,11 @@ import {
     onAuthStateChanged,
     sendPasswordResetEmail
 } from "firebase/auth";
-import { doc, setDoc, getDoc, collection, query, where, getDocs, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, collection, query, where, getDocs, onSnapshot } from "firebase/firestore";
 
 const AuthContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
     return useContext(AuthContext);
 }
@@ -18,6 +19,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
     const [currentUser, setCurrentUser] = useState(null);
     const [userData, setUserData] = useState(null); // Firestore profile data
+    const [globalPosters, setGlobalPosters] = useState({}); // Map: tmdbId -> posterPath
     const [loading, setLoading] = useState(true);
 
     async function checkUsernameAvailability(username) {
@@ -37,7 +39,7 @@ export function AuthProvider({ children }) {
             username: additionalData.username, // Save username
             createdAt: new Date(),
             dob: additionalData.dob || null, // Storing DOB as requested
-            bio: "Movie enthusiast.",
+            bio: "",
             avatarUrl: "",
             // Optimized Arrays for storage efficiency
             watchlist: [], // Array of { tmdbId, type, addedAt }
@@ -108,11 +110,13 @@ export function AuthProvider({ children }) {
         return () => unsubscribeAuth();
     }, []);
 
-    // 2. User Data Listener (Real-time)
+    // 2. User Data & Posters Listener (Real-time)
     useEffect(() => {
         let unsubscribeData = () => { };
+        let unsubscribePosters = null;
 
         if (currentUser) {
+            // User Data Listener (Firebase - still used for profile)
             const docRef = doc(db, "users", currentUser.uid);
             unsubscribeData = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
@@ -120,12 +124,62 @@ export function AuthProvider({ children }) {
                 }
                 setLoading(false); // Data ready
             }, (error) => {
-                console.error("Error fetching user data:", error);
+                // Error handling managed by UI state
                 setLoading(false);
+            });
+
+            // Posters Collection Listener (Supabase - NEW)
+            const fetchPostersRealtime = async () => {
+                const { supabase } = await import('../supabase-config');
+
+                // Initial fetch
+                const { data, error } = await supabase
+                    .from('user_posters')
+                    .select('series_id, poster_path')
+                    .eq('user_id', currentUser.uid);
+
+                if (!error && data) {
+                    const map = {};
+                    data.forEach(row => {
+                        if (row.series_id && row.poster_path) {
+                            map[row.series_id] = row.poster_path;
+                        }
+                    });
+                    setGlobalPosters(map);
+                }
+
+                // Subscribe to real-time changes
+                const channel = supabase
+                    .channel('user_posters_changes')
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: '*',
+                            schema: 'public',
+                            table: 'user_posters',
+                            filter: `user_id=eq.${currentUser.uid}`
+                        },
+                        () => {
+                            // Re-fetch on any change
+                            fetchPostersRealtime();
+                        }
+                    )
+                    .subscribe();
+
+                return () => {
+                    supabase.removeChannel(channel);
+                };
+            };
+
+            fetchPostersRealtime().then(unsub => {
+                unsubscribePosters = unsub;
             });
         }
 
-        return () => unsubscribeData();
+        return () => {
+            unsubscribeData();
+            if (unsubscribePosters) unsubscribePosters();
+        };
     }, [currentUser]);
 
     if (!auth) {
@@ -165,9 +219,21 @@ export function AuthProvider({ children }) {
         );
     }
 
+    // Safety Timeout for Loading
+    useEffect(() => {
+        if (loading) {
+            const timer = setTimeout(() => {
+                console.warn("AuthContext: Loading timeout reached, forcing render.");
+                setLoading(false);
+            }, 15000); // Increased to 15s for slow mobile networks
+            return () => clearTimeout(timer);
+        }
+    }, [loading]);
+
     const value = {
         currentUser,
         userData,
+        globalPosters, // Exposed for synchronous resolution
         signup,
         login,
         logout,
@@ -177,7 +243,7 @@ export function AuthProvider({ children }) {
 
     return (
         <AuthContext.Provider value={value}>
-            {!loading && children}
+            {children}
         </AuthContext.Provider>
     );
 }

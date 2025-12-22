@@ -1,57 +1,72 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { MdStar, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken } from 'react-icons/md';
+import { MdStar, MdStarBorder, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken, MdCelebration, MdMovie } from 'react-icons/md';
 import { FaArrowLeft } from 'react-icons/fa';
-import ReviewsDrawer from '../components/ReviewsDrawer';
 import ReviewModal from '../components/ReviewModal';
 import PosterUnlockPopup from '../components/PosterUnlockPopup';
+import { useScrollLock } from '../hooks/useScrollLock';
 
-import StorySticker from '../components/StorySticker';
-import ShareModal from '../components/ShareModal';
-import LoadingPopup from '../components/LoadingPopup';
+import MobileIndicator from '../components/MobileIndicator';
+import { useLoading } from '../context/LoadingContext';
+import ButtonLoader from '../components/ButtonLoader';
 import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../firebase-config';
-import html2canvas from 'html2canvas';
+import { getWatchedEpisodes, markEpisodeWatched, unmarkEpisodeWatched, markSeasonWatched } from '../utils/watchedService';
+import * as watchlistService from '../utils/watchlistService';
 import { doc, deleteDoc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc, query, where, getDocs, orderBy, onSnapshot, limit } from 'firebase/firestore';
+import { db } from '../firebase-config';
 
 import { logActivity } from '../utils/activityLogger';
-import { resolvePoster } from '../utils/posterResolution';
+import { triggerErrorAutomation } from '../utils/errorAutomation';
+import { getResolvedPosterUrl, resolvePoster } from '../utils/globalPosterResolver';
+import * as reviewService from '../utils/reviewService';
+import * as ratingsService from '../utils/ratingsService';
+import * as diaryService from '../utils/diaryService';
+import { likesService } from '../utils/likesService';
+import { tmdbApi } from '../utils/tmdbApi';
 import gsap from 'gsap';
 import './Home.css';
 
 const MovieDetails = () => {
     const { id, seasonNumber } = useParams();
     const navigate = useNavigate();
-    const { currentUser, userData } = useAuth(); // Get Access to Auth
+    const { currentUser, userData, globalPosters } = useAuth(); // Get Access to Auth
     const { confirm } = useNotification();
-    const isTv = true;
+    const { setIsLoading, stopLoading } = useLoading();
     const type = 'tv';
 
     const [details, setDetails] = useState(null);
     const [cast, setCast] = useState([]);
     const [crew, setCrew] = useState([]);
     const [reviewsData, setReviewsData] = useState([]);
-    const [ratings, setRatings] = useState([]);
-    const [trailer, setTrailer] = useState(null);
+    const [watchProviders, setWatchProviders] = useState(null);
+
 
     const [loading, setLoading] = useState(true);
     const [inWatchlist, setInWatchlist] = useState(false);
     const [isLiked, setIsLiked] = useState(false);
+    const [limitPopupVisible, setLimitPopupVisible] = useState(false);
+    const [error, setError] = useState(null); // Add Error State
+    // Micro-loading states
+    const [actionLoading, setActionLoading] = useState({
+        watchlist: false,
+        watched: false,
+        share: false
+    });
 
     // Animation Ref
     const heartRef = useRef(null);
     const brokenHeartRef = useRef(null);
 
     // Double Tap Logic
-    let lastTap = 0;
+    const lastTapRef = useRef(0);
     const handlePosterClick = (e) => {
         const currentTime = new Date().getTime();
-        const tapLength = currentTime - lastTap;
+        const tapLength = currentTime - lastTapRef.current;
         if (tapLength < 300 && tapLength > 0) {
             handlePosterDoubleTap(e);
         }
-        lastTap = currentTime;
+        lastTapRef.current = currentTime;
     };
 
     const handlePosterDoubleTap = async (e) => {
@@ -100,6 +115,12 @@ const MovieDetails = () => {
 
     const [seasonDetails, setSeasonDetails] = useState(null);
     const [isWatched, setIsWatched] = useState(false);
+
+    // Popup State
+    const [showPosterUnlockPopup, setShowPosterUnlockPopup] = useState(false);
+    const [posterUnlockData, setPosterUnlockData] = useState(null);
+    const [posterUrl, setPosterUrl] = useState(null); // Added missing state
+
     // Poster Edit & Scroll State
     const posterContainerRef = useRef(null);
     const [showEditHint, setShowEditHint] = useState(false);
@@ -115,31 +136,10 @@ const MovieDetails = () => {
         selectedPoster: null
     });
 
-    useEffect(() => {
-        if (userData && details && selectedSeason) {
-            const completedKey = String(details.id);
-            const completedSeasons = userData.completedSeasons?.[completedKey] || [];
-            const isCompleted = completedSeasons.includes(Number(selectedSeason));
-            const selectedPosterKey = `${details.id}_${selectedSeason}`;
-            const selectedPoster = userData.selectedPosters?.[selectedPosterKey];
+    // Track previous completion state to trigger popup only on NEW completion
+    const prevCompletedRef = useRef(false);
 
-            // DEBUG: Log completion status
-            console.log('🔍 Season Progress Check:', {
-                seriesId: details.id,
-                selectedSeason,
-                completedKey,
-                completedSeasons,
-                isCompleted,
-                hasUserData: !!userData
-            });
 
-            setSeasonProgress({
-                completed: !!isCompleted,
-                rated: false,
-                selectedPoster: selectedPoster
-            });
-        }
-    }, [userData, details, selectedSeason]);
 
     const handlePopupClose = () => {
         setShowPosterUnlockPopup(false);
@@ -171,6 +171,24 @@ const MovieDetails = () => {
         }
     };
 
+    const canEditPoster = () => {
+        if (!userData?.lastPosterEditAt) return true;
+
+        const lastEdit = new Date(userData.lastPosterEditAt).getTime();
+        const now = new Date().getTime();
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+
+        return (now - lastEdit) >= twentyFourHours;
+    };
+
+    const handleEditClick = () => {
+        if (!canEditPoster()) {
+            setLimitPopupVisible(true);
+            return;
+        }
+        navigate(`/tv/${details.id}/season/${selectedSeason}/poster`);
+    };
+
 
     // Review Modal State
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -178,159 +196,201 @@ const MovieDetails = () => {
     const [existingReviewData, setExistingReviewData] = useState(null);
 
     // Episode Tracking
-    const [episodeWatchedIDs, setEpisodeWatchedIDs] = useState([]);
+    const [episodeWatchedIDs, setEpisodeWatchedIDs] = useState(new Set()); // Use Set for efficient lookup
     const [episodeWatchlistIDs, setEpisodeWatchlistIDs] = useState([]);
     const [showSeasonCompletion, setShowSeasonCompletion] = useState(false);
     const [completedSeasonInfo, setCompletedSeasonInfo] = useState(null);
+    const [isSeasonOpen, setIsSeasonOpen] = useState(false);
 
+    // Global Scroll Lock for inline popups
+    useScrollLock(showSeasonCompletion || limitPopupVisible || isSeasonOpen);
 
+    // Fetch Watched Status from Supabase (SSOT)
+    useEffect(() => {
+        const fetchWatched = async () => {
+            // Clear state if no user or id
+            if (!currentUser || !details?.id) {
+                if (!currentUser) setEpisodeWatchedIDs(new Set());
+                return;
+            }
+
+            const watchedList = await getWatchedEpisodes(currentUser.uid, details.id);
+            const newSet = new Set(watchedList.map(w => `${w.season}-${w.episode}`));
+            setEpisodeWatchedIDs(newSet);
+        };
+        fetchWatched();
+    }, [currentUser, details?.id]);
 
     // Filter User Series Review (for Action Button State) - Keeping Series Level
     const userSeriesReview = reviewsData.find(r => r.tmdbId === parseInt(id || 0) && r.userId === currentUser?.uid && !r.isEpisode && !r.isSeason);
     // Find User Season Review
     const userSeasonReview = reviewsData.find(r => r.tmdbId === parseInt(id || 0) && r.userId === currentUser?.uid && r.isSeason && r.seasonNumber === selectedSeason);
-
-    const [isSeasonOpen, setIsSeasonOpen] = useState(false);
     const [episodes, setEpisodes] = useState([]);
     const [seasonsValues, setSeasonsValues] = useState([]);
 
-    const [watchProviders, setWatchProviders] = useState(null);
-
     // Review Likes State
     const [reviewLikes, setReviewLikes] = useState({});
-    const [isReviewsOpen, setIsReviewsOpen] = useState(false);
     const [shareModal, setShareModal] = useState({ isOpen: false, imageUrl: '' });
 
+    // EFFECT: Calculate Season Progress (Moved here to avoid TDZ for 'episodes')
+    useEffect(() => {
+        if (details && selectedSeason && episodes.length > 0) {
+            // 1. Calculate Completion locally (Source of Truth: episodeWatchedIDs)
+            const seasonEpisodes = episodes.filter(ep => ep.season_number === Number(selectedSeason));
+            const totalEpisodes = seasonEpisodes.length;
+
+            let completedCount = 0;
+            seasonEpisodes.forEach(ep => {
+                if (episodeWatchedIDs.has(`${ep.season_number}-${ep.episode_number}`)) {
+                    completedCount++;
+                }
+            });
+
+            const isCompleted = totalEpisodes > 0 && completedCount === totalEpisodes;
+
+            // 2. Check Global Poster
+            const resolvedPoster = globalPosters?.[details.id] || null;
+
+            // 3. Trigger Popup if newly completed
+            if (isCompleted && !prevCompletedRef.current) {
+                // Logic to handle popup if needed, or rely on button glow
+            }
+
+            setSeasonProgress({
+                completed: isCompleted,
+                rated: false,
+                selectedPoster: resolvedPoster
+            });
+
+            // Update Ref
+            prevCompletedRef.current = isCompleted;
+        }
+    }, [details, selectedSeason, episodes, episodeWatchedIDs, globalPosters]);
+
     // Helper Functions (need to be defined before computed values)
+    const fetchSeasonEpisodes = useCallback(async (seriesId, seasonNum, seriesNameOverride = null) => {
+        try {
+            // Phase 3: Backend Cache
+            const data = await tmdbApi.getSeasonDetails(seriesId, seasonNum);
+            const videosData = data.videos || {};
+            // const data = await res.json(); // Replaced
+            // const videosData = await videosRes.json(); // Replaced
+
+            let episodes = data.episodes || [];
+
+            // OMDb Integration for Season Ratings
+            const nameToUse = seriesNameOverride || details?.name;
+            if (nameToUse) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
+
+                    const omdbRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(nameToUse)}&Season=${seasonNum}&apikey=15529774`, {
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeoutId);
+
+                    const omdbData = await omdbRes.json();
+
+                    if (omdbData.Response === "True" && omdbData.Episodes) {
+                        // Merge ratings
+                        episodes = episodes.map(ep => {
+                            const omdbEp = omdbData.Episodes.find(o => o.Episode === String(ep.episode_number));
+                            return omdbEp ? { ...ep, omdbRating: omdbEp.imdbRating } : ep;
+                        });
+                    }
+                } catch (e) {
+                    console.warn("OMDb Season fetch failed (Skipped):", e.name === 'AbortError' ? 'Timeout' : e.message);
+                }
+            }
+
+            setEpisodes(episodes);
+            setSeasonDetails({ ...data, videos: videosData });
+
+            // Trailer implementation removed for stability
+
+            setLoading(false);
+            stopLoading();
+        } catch (err) {
+            console.error("Failed to fetch episodes", err);
+            setLoading(false);
+            stopLoading();
+        }
+    }, [details?.name]);
+
+
+    // FETCH DETAILS EFFECT (Restored)
+
     const getSeasonName = (seasonNum) => {
         const season = seasonsValues.find(s => s.season_number === seasonNum);
         return season && season.name ? season.name : `Season ${seasonNum}`;
     };
 
     const getCurrentSeasonRating = () => {
-        const seasonReviews = reviewsData.filter(r => r.tmdbId === parseInt(id) && r.seasonNumber === selectedSeason && r.isEpisode);
+        // Filter reviews for THIS specific series and season
+        // Include BOTH Episode-level reviews AND the Season-level review itself
+        const seasonReviews = reviewsData.filter(r =>
+            Number(r.tmdbId) === Number(id) &&
+            Number(r.seasonNumber) === Number(selectedSeason) &&
+            (r.isEpisode || r.isSeason)
+        );
+
         if (seasonReviews.length === 0) return { avg: "0.0", count: 0 };
         const sum = seasonReviews.reduce((acc, r) => acc + (parseFloat(r.rating) || 0), 0);
         return { avg: (sum / seasonReviews.length).toFixed(1), count: seasonReviews.length };
     };
 
     // Computed Values
-    const title = details?.name || 'Loading...';
+    const getEnglishTitle = () => {
+        if (!details) return 'Loading...';
+        if (details.translations?.translations) {
+            const enTranslation = details.translations.translations.find(t => t.iso_639_1 === 'en');
+            if (enTranslation && enTranslation.data?.name) return enTranslation.data.name;
+        }
+        return details.name;
+    };
+
+    const getEnglishLogo = () => {
+        if (!details?.images?.logos) return null;
+        // Priority 1: English logos
+        const enLogos = details.images.logos.filter(l => l.iso_639_1 === 'en');
+        if (enLogos.length > 0) return enLogos[0].file_path;
+        // Priority 2: Logos with no language (often stylized English)
+        const noLangLogos = details.images.logos.filter(l => !l.iso_639_1);
+        if (noLangLogos.length > 0) return noLangLogos[0].file_path;
+        // Priority 3: Fallback to first available logo
+        return details.images.logos[0]?.file_path;
+    };
+
+    const title = getEnglishTitle();
+    const logoFilePath = getEnglishLogo();
     const seasonStats = getCurrentSeasonRating();
 
-
-
-    // Sticker Logic
-    const [stickerModalOpen, setStickerModalOpen] = useState(false);
-    const [stickerStatus, setStickerStatus] = useState('idle'); // idle, preparing, ready
-    const [stickerData, setStickerData] = useState(null);
-    const [generatedStickerImage, setGeneratedStickerImage] = useState(null);
-    const stickerRef = useRef(null);
-
-    const generateSticker = async () => {
-        if (!stickerRef.current) return;
-        setStickerStatus('preparing');
-
-        // CRITICAL FIX: Wait for images to load before capture
-        // This prevents black/empty stickers on mobile
-
-        // Step 1: Small delay for DOM to settle
-        await new Promise(r => setTimeout(r, 100));
-
-        // Step 2: Wait for BOTH images to finish loading
-        const waitForImages = async () => {
-            const maxWait = 4000; // 4 second timeout
-            const startTime = Date.now();
-
-            while (Date.now() - startTime < maxWait) {
-                const posterLoaded = stickerRef.current?.getAttribute('data-poster-loaded') === 'true';
-                const pfpLoaded = stickerRef.current?.getAttribute('data-pfp-loaded') === 'true';
-
-                if (posterLoaded && pfpLoaded) {
-                    return true; // Both images loaded
-                }
-
-                // Check every 50ms
-                await new Promise(r => setTimeout(r, 50));
-            }
-
-            console.warn('Image load timeout - proceeding anyway');
-            return false;
-        };
-
-        await waitForImages();
-
-        // Step 3: Additional delay for fonts/layout (mobile-critical)
-        await new Promise(r => setTimeout(r, 400));
-
-        try {
-            const canvas = await html2canvas(stickerRef.current, {
-                useCORS: true,
-                scale: 2,
-                backgroundColor: null,
-                width: 1080,
-                height: 1920,
-                logging: false,
-                allowTaint: false,
-                onclone: (clonedDoc) => {
-                    const el = clonedDoc.getElementById('story-sticker-element');
-                    if (el) {
-                        el.style.display = 'flex';
-                        el.style.position = 'relative';
-                        el.style.top = '0';
-                        el.style.left = '0';
-                        el.style.transform = 'none';
-                    }
-                }
-            });
-
-            canvas.toBlob((blob) => {
-                if (!blob) {
-                    console.error("Blob generation failed");
-                    setStickerStatus('idle');
-                    return;
-                }
-                const url = URL.createObjectURL(blob);
-                setGeneratedStickerImage(url);
-                setStickerStatus('ready');
-            }, 'image/png');
-
-        } catch (e) {
-            console.error("Sticker Gen Error:", e);
-            setStickerStatus('idle');
-        }
-    };
-
-    // Auto-trigger generation whenever data is set for the modal
+    // START INSERT FOR POSTER SYNC
+    // INITIAL POSTER RESOLVE
     useEffect(() => {
-        if (stickerModalOpen && stickerData && stickerStatus === 'idle') {
-            generateSticker();
+        if (details?.poster_path) {
+            const resolved = resolvePoster(details.id, details.poster_path, globalPosters);
+            setPosterUrl(resolved);
         }
-    }, [stickerModalOpen, stickerData, stickerStatus]);
+    }, [details, globalPosters]); // Re-run if globalPosters changes
 
-    const handleShareSticker = async () => {
-        if (!generatedStickerImage) return;
-        try {
-            const blob = await fetch(generatedStickerImage).then(r => r.blob());
-            const file = new File([blob], `SERIEE_Share_${Date.now()}.png`, { type: 'image/png' });
-
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({
-                    files: [file]
-                });
-            } else {
-                // Fallback: Download logic if share not supported (Desktop) calls the same blob logic or shows prompt
-                const a = document.createElement('a');
-                a.href = generatedStickerImage;
-                a.download = file.name;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+    // LISTENER FOR IMMEDIATE POSTER UPDATE (From Popup)
+    useEffect(() => {
+        const handlePosterUpdate = (e) => {
+            if (e.detail && e.detail.seriesId == id) { // Loose compare for string/num
+                console.log("⚡ POSTER UPDATED EVENT RECEIVED!", e.detail.newPoster);
+                setPosterUrl(e.detail.newPoster);
             }
-        } catch (e) {
-            console.error("Native Share Error", e);
-        }
-    };
+        };
+        window.addEventListener('poster-updated', handlePosterUpdate);
+        return () => window.removeEventListener('poster-updated', handlePosterUpdate);
+    }, [id]);
+    // END INSERT
+
+
+
+    // Check if all episodes in a season are completed
 
     // Check if all episodes in a season are completed
     const checkSeasonCompletion = (seasonNumber) => {
@@ -390,8 +450,9 @@ const MovieDetails = () => {
                     completed: true
                 }));
 
-                // Show unlock popup
-                setShowPosterUnlockPopup(true);
+                // Show unlock popup (New Design)
+                setShowSeasonCompletion(true);
+                // We can still set this for data if needed, but new popup is static text
                 setPosterUnlockData({
                     seriesId: details.id,
                     seasonNumber: seasonNumber,
@@ -399,29 +460,23 @@ const MovieDetails = () => {
                 });
             }
         } catch (error) {
-            console.error('Error handling season completion:', error);
+            triggerErrorAutomation(error);
         }
     };
 
-    const closeStickerModal = () => {
-        setStickerModalOpen(false);
-        setStickerStatus('idle');
-        setGeneratedStickerImage(null);
-        setStickerData(null);
-    };
 
-    const handleShare = (reviewItem, isEpisode = false, isSeason = false) => {
-        // CRITICAL: Reset cached image to force fresh generation
-        setGeneratedStickerImage(null);
-        setStickerStatus('idle');
+    const handleShare = (reviewItem, isEpisodeArg = false, isSeasonArg = false) => {
+        // Fallback to reviewItem properties if arguments are not provided (e.g. from ReviewsDrawer)
+        const isEpisode = isEpisodeArg || reviewItem.isEpisode;
+        const isSeason = isSeasonArg || reviewItem.isSeason;
 
         // Resolve Poster Path & Season Info
         let seasonEpisodeText = null;
 
         const targetSeasonNum = Number(reviewItem.seasonNumber || (isSeason ? seasonNumber : null));
 
-        // Use Global Resolution Utility
-        let posterPathToUse = resolvePoster(userData, details.id, targetSeasonNum, details.poster_path);
+        // Use Global Resolution Utility - resolvePoster now comes from globalPosterResolver
+        let posterPathToUse = resolvePoster(details.id, details.poster_path, globalPosters);
 
         const foundSeason = targetSeasonNum ? seasonsValues.find(s => s.season_number === targetSeasonNum) : null;
 
@@ -445,46 +500,55 @@ const MovieDetails = () => {
             seasonEpisodeText = `S${reviewItem.seasonNumber}`;
         }
 
-        setStickerData({
+        const stickerDataToPass = {
             movie: {
                 name: details.name,
                 poster_path: posterPathToUse,
                 seasonEpisode: seasonEpisodeText
             },
-            rating: reviewItem?.rating ? parseFloat(reviewItem.rating) * 2 : 0,
+            rating: reviewItem?.rating ? (parseFloat(reviewItem.rating) <= 5 ? parseFloat(reviewItem.rating) * 2 : parseFloat(reviewItem.rating)) : 0,
             user: {
-                username: userData?.username || 'User',
-                photoURL: currentUser?.photoURL,
-                uid: currentUser?.uid
+                username: userData?.username || currentUser?.displayName || reviewItem.userName || 'User',
+                photoURL: reviewItem.photoURL || currentUser?.photoURL,
+                uid: reviewItem.userId || currentUser?.uid
             },
             isEpisodes: isEpisode,
             seasonCompleted: isSeason ? checkSeasonCompletion(reviewItem.seasonNumber) : false
-        });
-        setStickerModalOpen(true);
+        };
+
+        navigate('/share-sticker', { state: { stickerData: stickerDataToPass } });
     };
 
     useEffect(() => {
-        const savedReviewLikes = JSON.parse(localStorage.getItem('reviewLikes') || '{}');
-        setReviewLikes(savedReviewLikes);
+        try {
+            const raw = localStorage.getItem('reviewLikes');
+            if (raw && raw !== "[object Object]") {
+                const savedReviewLikes = JSON.parse(raw);
+                setReviewLikes(savedReviewLikes || {});
+            } else {
+                setReviewLikes({});
+            }
+        } catch (e) {
+            console.error("Error parsing reviewLikes from localStorage:", e);
+            setReviewLikes({});
+            localStorage.setItem('reviewLikes', '{}');
+        }
     }, []);
 
-    // Real-time Reviews Listener (Firestore) for this Series
-    // Real-time Reviews Listener (Firestore) for this Series - Optimized
+    // Reviews Fetch (Dual-Read: Supabase → Firebase Fallback)
     useEffect(() => {
         if (!id) return;
-        // Limit to 20 recent reviews to save bandwidth/reads
-        const q = query(
-            collection(db, 'reviews'),
-            where('tmdbId', '==', parseInt(id)),
-            orderBy('createdAt', 'desc'),
-            limit(20)
-        );
-        const unsub = onSnapshot(q, (snapshot) => {
-            const fetched = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
-            // We replace local state with Firestore data to ensure ratings are accurate
-            setReviewsData(fetched);
-        });
-        return () => unsub();
+
+        const fetchReviews = async () => {
+            const reviews = await reviewService.getSeriesReviews(parseInt(id));
+            setReviewsData(reviews);
+        };
+
+        fetchReviews();
+
+        // Poll for updates every 10 seconds (replace real-time listener)
+        const interval = setInterval(fetchReviews, 10000);
+        return () => clearInterval(interval);
     }, [id, seasonNumber]);
 
     const toggleReviewLike = async (reviewId) => {
@@ -518,41 +582,33 @@ const MovieDetails = () => {
 
     useEffect(() => {
         const fetchData = async () => {
+            setIsLoading(true);
             setLoading(true);
             try {
-                // Parallel fetch for Details, Credits (Cast/Crew), Reviews, Providers, and External IDs
-                const [detailsRes, creditsRes, reviewsRes, providersRes, externalIdsRes, videosRes] = await Promise.all([
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}?api_key=${TMDB_API_KEY}&append_to_response=images,recommendations&include_image_language=en,null`),
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}/credits?api_key=${TMDB_API_KEY}`),
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}/reviews?api_key=${TMDB_API_KEY}`),
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}/watch/providers?api_key=${TMDB_API_KEY}`),
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}/external_ids?api_key=${TMDB_API_KEY}`),
-                    fetch(`${TMDB_BASE_URL}/${type}/${id}/videos?api_key=${TMDB_API_KEY}`)
-                ]);
+                // Phase 3: Use Backend Cache Service (Aggregated Data)
+                const data = await tmdbApi.getSeriesDetails(id);
 
-                const detailsData = await detailsRes.json();
-                const creditsData = await creditsRes.json();
-                const reviewsData = await reviewsRes.json();
-                const providersData = await providersRes.json();
-                const externalIdsData = await externalIdsRes.json();
-                const videosData = await videosRes.json();
+                const detailsData = data;
+                const creditsData = data.credits || {};
+                const providersData = data['watch/providers'] || {};
+                const externalIdsData = data.external_ids || {};
+                const videosData = data.videos || {};
 
                 // Fetch OMDb Ratings if IMDb ID exists
                 if (externalIdsData.imdb_id) {
                     try {
-                        const omdbRes = await fetch(`https://www.omdbapi.com/?i=${externalIdsData.imdb_id}&apikey=15529774`);
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
+
+                        const omdbRes = await fetch(`https://www.omdbapi.com/?i=${externalIdsData.imdb_id}&apikey=15529774`, {
+                            signal: controller.signal
+                        });
+                        clearTimeout(timeoutId);
+
                         const omdbData = await omdbRes.json();
-                        setRatings(omdbData.Ratings || []);
-                        if (omdbData.imdbRating) {
-                            setRatings(prev => {
-                                // dedup if imdb already in Ratings array (sometimes it is, sometimes not)
-                                const exists = prev.some(r => r.Source === "Internet Movie Database");
-                                if (!exists) return [...prev, { Source: "Internet Movie Database", Value: `${omdbData.imdbRating}/10` }];
-                                return prev;
-                            });
-                        }
+                        // Ratings state removed
                     } catch (e) {
-                        console.error("OMDb Fetch Error", e);
+                        console.warn("OMDb Fetch Error (Skipped):", e.name === 'AbortError' ? 'Timeout' : e.message);
                     }
                 }
 
@@ -568,7 +624,14 @@ const MovieDetails = () => {
 
                 if (videosData?.results) {
                     const trailerVideo = videosData.results.find(vid => vid.type === 'Trailer' && vid.site === 'YouTube');
-                    setTrailer(trailerVideo || null);
+                    // Trailer implementation removed for stability
+                }
+
+                if (data.images && data.images.logos) {
+                    // Find the best logo (English, PNG)
+                    const logos = data.images.logos;
+                    const bestLogo = logos.find(l => l.iso_639_1 === 'en') || logos[0];
+                    // Logic moved to derived variable getEnglishLogo
                 }
 
                 setCrew(creators);
@@ -590,70 +653,25 @@ const MovieDetails = () => {
                     fetchSeasonEpisodes(detailsData.id, seasonToFetch, detailsData.name);
                 } else {
                     setLoading(false);
+                    stopLoading();
                 }
             } catch (error) {
-                console.error("Failed to fetch details", error);
+                triggerErrorAutomation(error);
                 setLoading(false);
+                stopLoading();
             }
         };
+
         fetchData();
-    }, [id]);
+    }, [id, fetchSeasonEpisodes, seasonNumber]);
 
 
 
-    const fetchSeasonEpisodes = async (seriesId, seasonNum, seriesNameOverride = null) => {
-        try {
-            const [res, videosRes] = await Promise.all([
-                fetch(`${TMDB_BASE_URL}/tv/${seriesId}/season/${seasonNum}?api_key=${TMDB_API_KEY}`),
-                fetch(`${TMDB_BASE_URL}/tv/${seriesId}/season/${seasonNum}/videos?api_key=${TMDB_API_KEY}`)
-            ]);
-
-            const data = await res.json();
-            const videosData = await videosRes.json();
-
-            let episodes = data.episodes || [];
-
-            // OMDb Integration for Season Ratings
-            const nameToUse = seriesNameOverride || details?.name;
-            if (nameToUse) {
-                try {
-                    const omdbRes = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(nameToUse)}&Season=${seasonNum}&apikey=15529774`);
-                    const omdbData = await omdbRes.json();
-
-                    if (omdbData.Response === "True" && omdbData.Episodes) {
-                        // Merge ratings
-                        episodes = episodes.map(ep => {
-                            const omdbEp = omdbData.Episodes.find(o => o.Episode === String(ep.episode_number));
-                            return omdbEp ? { ...ep, omdbRating: omdbEp.imdbRating } : ep;
-                        });
-                    }
-                } catch (e) {
-                    console.warn("OMDb Season fetch failed", e);
-                }
-            }
-
-            setEpisodes(episodes);
-            setSeasonDetails({ ...data, videos: videosData });
-
-            // Set Season Trailer if available
-            if (videosData?.results) {
-                const trailerVideo = videosData.results.find(vid => vid.type === 'Trailer' && vid.site === 'YouTube');
-                setTrailer(trailerVideo || null);
-            } else {
-                setTrailer(null);
-            }
-
-            setLoading(false);
-        } catch (err) {
-            console.error("Failed to fetch episodes", err);
-            setLoading(false);
-        }
-    };
 
 
 
-    const [showStoryPrompt, setShowStoryPrompt] = useState(false);
-    const [storyPromptData, setStoryPromptData] = useState(null);
+
+
 
     const checkAuth = async () => {
         if (!currentUser) {
@@ -672,32 +690,86 @@ const MovieDetails = () => {
         fetchSeasonEpisodes(id, newSeason);
     };
 
-    // Sync User State from Firestore (Season Aware)
-    // Sync User State from Firestore (Season Aware) - Optimized using AuthContext
+    // Sync User State from Firestore & Supabase
     useEffect(() => {
         if (currentUser && details && userData) {
             const data = userData;
 
-            // Check Season specific state if season > 0
-            // We use selectedSeason to check.
-            const isSeasonItem = (i) => i.id === details.id && i.isSeason && i.seasonNumber === selectedSeason;
-            const isSeriesItem = (i) => i.id === details.id && !i.isEpisode && !i.isSeason;
+            // 1. Sync Watchlist State (Supabase SSOT with Firebase Fallback)
+            const syncWatchlist = async () => {
+                const currentWatchlist = await watchlistService.getWatchlist(currentUser.uid);
 
-            // Watchlist: Check if THIS season (or series if fallback) is in watchlist
-            setInWatchlist(data.watchlist?.some(i => i.seriesId === details.id && i.isSeason && i.seasonNumber === selectedSeason) || false);
+                // Set InWatchlist for current Season
+                const isInWatch = currentWatchlist.some(i =>
+                    i.seriesId === details.id &&
+                    i.isSeason &&
+                    i.seasonNumber === selectedSeason
+                );
+                setInWatchlist(isInWatch);
 
-            // Like
-            setIsLiked(data.likes?.some(i => i.seriesId === details.id && i.isSeason && i.seasonNumber === selectedSeason) || false);
+                // Sync Episode States
+                const watchlistEps = currentWatchlist
+                    .filter(i => i.seriesId === details.id && i.isEpisode)
+                    .map(i => i.id || i.tmdb_id);
+                setEpisodeWatchlistIDs(watchlistEps);
+            };
+            syncWatchlist();
 
-            // Watched
-            setIsWatched(data.watched?.some(i => i.seriesId === details.id && i.isSeason && i.seasonNumber === selectedSeason) || false);
+            // 2. Like Status (Using SSOT Service)
+            const checkLikeStatus = async () => {
+                // Check if SERIES is liked (since current UI seems to be Series or Season like? 
+                // The toggleLike logic I replaced was SERIES or SEASON?
+                // Wait, previous toggleLike logic (lines 846-856) used `selectedSeason` and `isSeason: true`. 
+                // So the button handles SEASON likes??
+                // "id: `${details.id}-S${selectedSeason}`"
+                // The prompt said "likeSeries / unlikeSeries".
+                // I need to be careful. The User Request said "Series / Season / Episode".
+                // Does the UI distinguish?
+                // The Heart button in header usually means Series.
+                // But the code I'm replacing was explicitly constructing a SEASON item.
+                // "isSeason: true, seasonNumber: selectedSeason".
 
-            // Sync Episode States
-            const watchedEps = data.watched?.filter(i => i.seriesId === details.id && i.isEpisode).map(i => i.id) || [];
-            setEpisodeWatchedIDs(watchedEps);
+                // If I change this to Series only, I change behavior.
+                // However, usually the main heart is Series. The code I saw looked like Season.
+                // BUT `toggleLike` triggers `handlePosterDoubleTap` on the POSTER.
+                // If I am on Season page, maybe it likes the Season?
+                // The prompt says: "likesService.likeSeries(), likeSeason(), likeEpisode()".
+                // I should probably check which one to use.
+                // If `seasonNumber` is present, maybe it's Season Like?
+                // But typically users 'Like' a Show.
+                // Let's look at `toggleLike` context again. 
+                // It used `userData.likes` ... `isSeason && seasonNumber === selectedSeason`.
+                // So it was DEFINITELY liking the SEASON inside this component.
 
-            const watchlistEps = data.watchlist?.filter(i => i.seriesId === details.id && i.isEpisode).map(i => i.id) || [];
-            setEpisodeWatchlistIDs(watchlistEps);
+                // Okay, if the component logic was liking the SEASON, I should use `likesService.likeSeason`.
+                // BUT, looking at `MovieDetails` ... it seems to handle Season selection.
+                // If I like S1, do I like the Series?
+                // The Prompt says: "User liked X -> Supabase likes table ... Item (series / season / episode)".
+
+                // I will maintain existing behavior: If `selectedSeason` is set, we are liking the SEASON.
+                // Wait, if I am on the main movie page (`/tv/:id`), `seasonNumber` might be undefined or 1.
+                // The current code defaults `selectedSeason` to 1 if not param.
+
+                // If the user treats this as "Liking the Show", then implementation was bugged or specific.
+                // Most apps: Heart = Like Show.
+                // Letterboard seems to have granular likes.
+                // I will use `likeSeason` if that's what the old code did. 
+                // Old code: `id: ...-S${selectedSeason}`, `item_type: season`.
+
+                // SO: `likesService.likeSeason` is the correct replacement.
+
+                const isSeasonLiked = await likesService.isLiked(
+                    currentUser.uid,
+                    details.id,
+                    'SEASON',
+                    selectedSeason
+                );
+                setIsLiked(isSeasonLiked);
+            };
+            checkLikeStatus();
+
+            // 3. Ep States - Likes (Firebase)
+            // (Wait, are there episode likes? Not explicitly tracked here, but logic is similar)
         }
     }, [currentUser, details, selectedSeason, userData]);
 
@@ -708,20 +780,19 @@ const MovieDetails = () => {
 
     const toggleWatchlist = async () => {
         if (!currentUser) return;
-        const userRef = doc(db, 'users', currentUser.uid);
 
-        // Define Season Item
+        // Define Season Item (Using numeric IDs for Supabase BIGINT tmdb_id)
+        const seasonId = seasonDetails?.id || Number(`${details.id}${selectedSeason}`); // Best effort numeric ID
         const seasonItem = {
-            id: `${details.id}-S${selectedSeason}`, // Unique ID for finding in array (optional, or just rely on properties)
+            id: seasonId,
             seriesId: details.id,
             name: `${details.name} (Season ${selectedSeason})`,
-            poster_path: seasonDetails?.poster_path || details.poster_path, // Use season poster
-            vote_average: details.vote_average, // Or season rating if we had it
+            poster_path: seasonDetails?.poster_path || details.poster_path,
+            vote_average: details.vote_average,
             first_air_date: seasonDetails?.air_date || details.first_air_date,
             type: 'season',
             isSeason: true,
             seasonNumber: selectedSeason,
-            date: new Date().toISOString()
         };
 
         // Define Episode Items for Bulk Add/Remove
@@ -729,10 +800,9 @@ const MovieDetails = () => {
         const episodeItems = episodes.map(ep => ({
             id: ep.id,
             name: `${details.name} - S${ep.season_number}E${ep.episode_number}: ${ep.name}`,
-            poster_path: details.poster_path, // Keep Series Poster as main lookup
+            poster_path: details.poster_path, // Series Poster
             seasonPoster: seasonPoster,
             still_path: ep.still_path,
-            backdrop_path: ep.still_path,
             vote_average: ep.vote_average,
             first_air_date: ep.air_date,
             type: 'episode',
@@ -740,322 +810,283 @@ const MovieDetails = () => {
             seriesId: details.id,
             seasonNumber: ep.season_number,
             episodeNumber: ep.episode_number,
-            date: new Date().toISOString()
         }));
 
         if (inWatchlist) {
-            if (userData) { // Use userData from context
-                const data = userData;
-                // Filter out Season Item AND All Episodes of this season
-                const newWatchlist = (data.watchlist || []).filter(i => {
-                    const isTargetSeason = i.seriesId === details.id && i.seasonNumber === selectedSeason && i.isSeason;
-                    const isTargetEpisode = i.seriesId === details.id && i.seasonNumber === selectedSeason && i.isEpisode;
-                    return !isTargetSeason && !isTargetEpisode;
-                });
-                await updateDoc(userRef, { watchlist: newWatchlist });
-            }
-            // Update Local State: Remove IDs of current season episodes
-            setEpisodeWatchlistIDs(prev => prev.filter(id => !episodes.some(e => e.id === id)));
-        } else {
-            // Add Season Item AND All Episodes
-            const itemsToAdd = [seasonItem, ...episodeItems];
-            await updateDoc(userRef, {
-                watchlist: arrayUnion(...itemsToAdd)
-            });
-            // Update Local State: Add IDs
-            setEpisodeWatchlistIDs(prev => [...new Set([...prev, ...episodes.map(e => e.id)])]);
+            // REMOVE FROM SUPABASE
+            const idsToRemove = [seasonItem.id, ...episodes.map(e => e.id)];
+            const success = await watchlistService.removeFromWatchlistBulk(currentUser.uid, idsToRemove);
 
-            // LOG ACTIVITY
-            logActivity(userData || currentUser, 'watchlist', {
-                id: details.id,
-                name: details.name,
-                poster_path: details.poster_path,
-                seasonNumber: selectedSeason
-            });
+            if (success) {
+                // Update Local State
+                setEpisodeWatchlistIDs(prev => prev.filter(id => !episodes.some(e => e.id === id)));
+                setInWatchlist(false);
+            }
+        } else {
+            // ADD TO SUPABASE
+            const itemsToAdd = [seasonItem, ...episodeItems];
+            const success = await watchlistService.addToWatchlist(currentUser.uid, itemsToAdd);
+
+            if (success) {
+                // Update Local State
+                setEpisodeWatchlistIDs(prev => [...new Set([...prev, ...episodes.map(e => e.id)])]);
+                setInWatchlist(true);
+
+                // LOG ACTIVITY (Using Firebase Auth Context for user object)
+                logActivity(userData || currentUser, 'watchlist', {
+                    seriesId: details.id, // FIX: id -> seriesId
+                    seriesName: details.name, // EXTRACTED
+                    posterPath: details.poster_path, // FIX: poster_path -> posterPath
+                    seasonNumber: selectedSeason
+                });
+            }
         }
-        setInWatchlist(!inWatchlist);
     };
 
     const toggleLike = async () => {
-        if (!currentUser) return;
-        const userRef = doc(db, 'users', currentUser.uid);
-        const itemToSave = {
-            id: `${details.id}-S${selectedSeason}`,
-            seriesId: details.id,
-            name: `${details.name} (Season ${selectedSeason})`,
-            poster_path: seasonDetails?.poster_path || details.poster_path,
-            vote_average: details.vote_average,
-            first_air_date: seasonDetails?.air_date || details.first_air_date,
-            type: 'season',
-            isSeason: true,
-            seasonNumber: selectedSeason,
-            date: new Date().toISOString()
-        };
-
-        if (isLiked) {
-            if (userData) {
-                const newLikes = (userData.likes || []).filter(i => !(i.seriesId === details.id && i.seasonNumber === selectedSeason && i.isSeason));
-                await updateDoc(userRef, { likes: newLikes });
-            }
-        } else {
-            await updateDoc(userRef, {
-                likes: arrayUnion(itemToSave)
-            });
-            // LOG ACTIVITY
-            logActivity(userData || currentUser, 'liked', {
-                id: details.id,
-                name: details.name,
-                poster_path: details.poster_path,
-                seasonNumber: selectedSeason
-            });
+        if (!currentUser) {
+            navigate('/login');
+            return;
         }
-        setIsLiked(!isLiked);
+
+        const newStatus = !isLiked;
+        // Optimistic UI Update
+        setIsLiked(newStatus);
+
+        try {
+            if (newStatus) {
+                await likesService.likeSeason(currentUser.uid, details.id, selectedSeason);
+            } else {
+                await likesService.unlikeSeason(currentUser.uid, details.id, selectedSeason);
+            }
+        } catch (error) {
+            console.error("Like toggle failed", error);
+            setIsLiked(!newStatus); // Revert on error
+        }
     };
 
     // Watched Logic
 
 
-    useEffect(() => {
-        if (details) {
-            checkWatched(details.id);
-        }
-    }, [details]);
 
-    const checkWatched = (tmdbId) => {
-        // Handled by syncUserState effect
-    };
 
-    const toggleWatched = async () => {
-        if (!currentUser) return;
-        const userRef = doc(db, 'users', currentUser.uid);
-        const itemToSave = {
-            id: `${details.id}-S${selectedSeason}`,
-            seriesId: details.id,
-            name: `${details.name} (Season ${selectedSeason})`,
-            poster_path: seasonDetails?.poster_path || details.poster_path,
-            vote_average: details.vote_average,
-            first_air_date: seasonDetails?.air_date || details.first_air_date,
-            type: 'season',
-            isSeason: true,
-            seasonNumber: selectedSeason,
-            date: new Date().toISOString()
-        };
 
-        if (isWatched) {
-            if (userData) {
-                const newWatched = (userData.watched || []).filter(i => !(i.seriesId === details.id && i.seasonNumber === selectedSeason && i.isSeason));
-                await updateDoc(userRef, { watched: newWatched });
-            }
-        } else {
-            await updateDoc(userRef, {
-                watched: arrayUnion(itemToSave)
-            });
-            // LOG ACTIVITY
-            logActivity(userData || currentUser, 'watched', {
-                id: details.id,
-                name: details.name,
-                poster_path: details.poster_path,
-                seasonNumber: selectedSeason
-            });
-        }
-        setIsWatched(!isWatched);
-    };
 
     // Removed addToWatched helper as it's merged or unnecessary with direct FS calls
 
     // Episode Watchlist Logic
 
 
+    // Initialize Watchlist from LocalStorage (Legacy/Guest?) - Keeping Watchlist logic but removing Watched
     useEffect(() => {
-        const watchlist = JSON.parse(localStorage.getItem('watchlist') || '[]');
-        setEpisodeWatchlistIDs(watchlist.filter(i => i.isEpisode).map(i => i.id));
-
-        const watched = JSON.parse(localStorage.getItem('watched') || '[]');
-        setEpisodeWatchedIDs(watched.filter(i => i.isEpisode).map(i => i.id));
+        try {
+            const watchlist = JSON.parse(localStorage.getItem('watchlist') || '[]');
+            if (Array.isArray(watchlist)) {
+                setEpisodeWatchlistIDs(watchlist.filter(i => i && i.isEpisode).map(i => i.id));
+            }
+        } catch (e) {
+            console.warn("Failed to parse legacy watchlist", e);
+        }
     }, []);
+
+    const checkEpisodeWatched = (ep) => {
+        // Updated to use S-E composite key from Set
+        // Accepts either an episode object { season_number, episode_number } OR just the IDs if we refactor callers.
+        // Existing callers pass `ep.id`. We need to handle that.
+        // If passed an ID (number/string), we must find the episode object from `episodes` state (if available).
+
+        let sNum, eNum;
+
+        if (typeof ep === 'object' && ep !== null && ep.season_number !== undefined) {
+            sNum = ep.season_number;
+            eNum = ep.episode_number;
+        } else {
+            // It's an ID. Try to find in `episodes` list (for current season)
+            const found = episodes.find(e => e.id === ep);
+            if (found) {
+                sNum = found.season_number;
+                eNum = found.episode_number;
+            } else {
+                // If not found in current season list, we can't verify watched status easily with just ID 
+                // unless we have a full map. But usually we only render current season.
+                return false;
+            }
+        }
+        return episodeWatchedIDs.has(`${sNum}-${eNum}`);
+    };
+
+    // Effect to update `isWatched` (Season Completion) based on `episodeWatchedIDs`
+    useEffect(() => {
+        if (seasonDetails?.episodes && seasonDetails.episodes.length > 0) {
+            const allWatched = seasonDetails.episodes.every(ep =>
+                checkEpisodeWatched(ep)
+            );
+            setIsWatched(allWatched);
+        }
+    }, [episodeWatchedIDs, seasonDetails]);
+
+    // Centralized Season Completion Trigger
+    useEffect(() => {
+        if (isWatched && details && userData) {
+            const completedKey = String(details.id);
+            const completedSeasons = userData.completedSeasons?.[completedKey] || [];
+            const isCompleted = completedSeasons.includes(Number(selectedSeason));
+
+            // Trigger flow only if not already recorded as completed in Firestore
+            if (!isCompleted) {
+                handleSeasonCompletedFlow(selectedSeason);
+            }
+        }
+    }, [isWatched, details, userData, selectedSeason]);
 
     const checkEpisodeInWatchlist = (epId) => {
         return episodeWatchlistIDs.includes(epId);
     };
 
-    const checkEpisodeWatched = (epId) => {
-        return episodeWatchedIDs.includes(epId);
-    };
-
     const toggleEpisodeWatched = async (episode) => {
         if (!currentUser) return;
-        const userRef = doc(db, 'users', currentUser.uid);
-        const itemToSave = {
-            id: episode.id,
-            episodeId: episode.id,
-            seriesId: details.id,
-            name: details.name, // Main name is Series name
-            episodeName: episode.name,
-            poster_path: details.poster_path,
-            still_path: episode.still_path,
-            vote_average: episode.vote_average,
-            first_air_date: episode.air_date,
-            type: 'episode',
-            date: new Date().toISOString(),
-            isEpisode: true,
-            seasonNumber: episode.season_number,
-            episodeNumber: episode.episode_number
-        };
+
+        // Composite Key
+        const key = `${episode.season_number}-${episode.episode_number}`;
+        const isCurrentlyWatched = episodeWatchedIDs.has(key);
+
+        // Optimistic Update
+        setEpisodeWatchedIDs(prev => {
+            const next = new Set(prev);
+            if (isCurrentlyWatched) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+
+        // Backend Call (Supabase Only)
+        let success = false;
+        if (isCurrentlyWatched) {
+            success = await unmarkEpisodeWatched(currentUser.uid, details.id, episode.season_number, episode.episode_number);
+        } else {
+            success = await markEpisodeWatched(currentUser.uid, details.id, episode.season_number, episode.episode_number);
+
+            if (success) {
+                // NEW: Remove from Watchlist (Supabase)
+                watchlistService.removeFromWatchlist(currentUser.uid, episode.id);
+
+                // LOG ACTIVITY
+                logActivity(userData || currentUser, 'watched_episode', {
+                    seriesId: details.id,
+                    seriesName: details.name,
+                    seasonNumber: episode.season_number,
+                    episodeNumber: episode.episode_number,
+                    posterPath: details.poster_path // Series poster for episodes usually
+                });
+            }
+        }
+
+        if (!success) {
+            // Revert
+            setEpisodeWatchedIDs(prev => {
+                const next = new Set(prev);
+                if (isCurrentlyWatched) next.add(key);
+                else next.delete(key);
+                return next;
+            });
+            triggerErrorAutomation(new Error("Failed to update status."));
+        }
+    };
+
+    const toggleSeasonWatched = async () => {
+        if (!currentUser || !seasonDetails || !seasonDetails.episodes) return;
+
+        const episodesToToggle = seasonDetails.episodes;
+        const shouldMarkWatched = !isWatched;
 
         try {
-            if (checkEpisodeWatched(episode.id)) {
-                // Remove
-                if (userData) {
-                    const data = userData;
-                    const newWatched = (data.watched || []).filter(i => i.id !== episode.id);
-                    // Also potentially remove milestones? (Too complex to revert completion logic for now, let's keep it simple: milestones stay)
-                    await updateDoc(userRef, { watched: newWatched });
+            if (shouldMarkWatched) {
+                // MARK ALL - Use markSeasonWatched service (triggers migration if needed)
+                const success = await markSeasonWatched(
+                    currentUser.uid,
+                    details.id,
+                    selectedSeason,
+                    episodesToToggle.length
+                );
+
+                if (success) {
+                    const allKeys = episodesToToggle.map(ep => `${ep.season_number}-${ep.episode_number}`);
+                    setEpisodeWatchedIDs(prev => new Set([...prev, ...allKeys]));
+                    setIsWatched(true);
+
+                    // NEW: Remove from Watchlist (Supabase)
+                    const idsToRemove = [seasonDetails?.id || Number(`${details.id}${selectedSeason}`), ...episodesToToggle.map(e => e.id)];
+                    watchlistService.removeFromWatchlistBulk(currentUser.uid, idsToRemove);
+
+                    // Update Local Watchlist State
+                    setInWatchlist(false);
+                    setEpisodeWatchlistIDs(prev => prev.filter(id => !episodesToToggle.some(e => e.id === id)));
+
+                    // DIARY MIGRATION: Log Season Completed
+                    diaryService.addSeasonCompletedEntry(
+                        currentUser.uid,
+                        details.id,
+                        selectedSeason,
+                        details.name,
+                        seasonDetails.poster_path || details.poster_path
+                    );
+
+                    // LOG ACTIVITY (Feed)
+                    logActivity(userData || currentUser, 'completed_season', {
+                        seriesId: details.id,
+                        seriesName: details.name,
+                        seasonNumber: selectedSeason,
+                        posterPath: seasonDetails?.poster_path || details.poster_path
+                    });
+
+                    // CHECK SERIES COMPLETION
+                    if (details.seasons) {
+                        const releasedSeasons = details.seasons.filter(s => s.season_number > 0 && s.air_date && new Date(s.air_date) <= new Date());
+                        let allSeasonsWatched = true;
+
+                        for (const s of releasedSeasons) {
+                            if (s.season_number === Number(selectedSeason)) continue;
+
+                            if (s.episode_count) {
+                                for (let i = 1; i <= s.episode_count; i++) {
+                                    if (!episodeWatchedIDs.has(`${s.season_number}-${i}`)) {
+                                        allSeasonsWatched = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!allSeasonsWatched) break;
+                        }
+
+                        if (allSeasonsWatched) {
+                            diaryService.addSeriesCompletedEntry(currentUser.uid, details.id, details.name, details.poster_path);
+                        }
+                    }
+                } else {
+                    throw new Error('Failed to mark season watched');
                 }
-                setEpisodeWatchedIDs(prev => prev.filter(id => id !== episode.id));
             } else {
-                // Add
-                // 1. Update Watched List
-                // We need to fetch current list to calculate completion accurately
-                if (userData) {
-                    const data = userData;
-                    let currentWatched = data.watched || [];
-                    let currentAchievements = data.achievements || [];
-                    let currentStarSeries = data.starSeries || [];
-
-                    // Add new item locally for calculation
-                    const updatedWatched = [...currentWatched, itemToSave];
-
-                    // --- SEASON COMPLETION CHECK (Client Side Only) ---
-                    // 1. Is this the last episode of the CURRENT season?
-                    // We rely on 'seasonDetails' which contains all episodes for the selected season.
-                    if (seasonDetails && seasonDetails.episodes) {
-                        const totalEpisodes = seasonDetails.episodes.length;
-                        const isLastEpisode = episode.episode_number === totalEpisodes; // Assuming ordered numbers
-
-                        if (isLastEpisode) {
-                            // 2. Are all PREVIOUS episodes watched?
-                            // We check if every episode (except the current one we are adding) is in 'episodeWatchedIDs'.
-                            const allOthersWatched = seasonDetails.episodes.every(ep => {
-                                if (ep.id === episode.id) return true; // Current one is being added now
-                                return episodeWatchedIDs.includes(ep.id);
-                            });
-
-                            if (allOthersWatched) {
-                                // TRIGGER CELEBRATION
-                                setCompletedSeasonInfo({
-                                    seasonNumber: episode.season_number,
-                                    poster: seasonDetails?.poster_path || details.poster_path
-                                });
-                                setShowSeasonCompletion(true);
-
-                                // REMOVED Auto-Dismiss: User must click OK
-                            }
-                        }
-                    }
-                    // --------------------------------------------------
-
-                    // 2. Check Season Completion
-                    const season = seasonsValues.find(s => s.season_number === episode.season_number);
-                    let newAchievements = [];
-                    let newStarSeries = [];
-
-                    if (season) {
-                        const watchedInSeason = updatedWatched.filter(w => w.seriesId === details.id && w.seasonNumber === episode.season_number);
-                        if (watchedInSeason.length >= season.episode_count) {
-                            // Season Completed!
-                            const achievementId = `${details.id}-S${episode.season_number}-COMPLETED`;
-                            if (!currentAchievements.some(a => a.id === achievementId)) {
-                                newAchievements.push({
-                                    id: achievementId,
-                                    seriesId: details.id,
-                                    name: details.name,
-                                    seasonNumber: episode.season_number,
-                                    type: 'season_finish',
-                                    date: new Date().toISOString(),
-                                    poster_path: details.poster_path
-                                });
-
-                                // CRITICAL: Trigger poster unlock flow!
-                                await handleSeasonCompletedFlow(episode.season_number);
-                            }
-                        }
-                    }
-
-                    // 3. Check Series Completion
-                    // Deduplicate by episode ID to be sure
-                    const uniqueWatchedIDs = new Set(updatedWatched.filter(w => w.seriesId === details.id).map(w => w.id));
-                    // Note: details.number_of_episodes is total.
-                    if (uniqueWatchedIDs.size >= details.number_of_episodes) {
-                        // Series Completed!
-                        const seriesAchievementId = `${details.id}-SERIES-COMPLETED`;
-                        if (!currentAchievements.some(a => a.id === seriesAchievementId)) {
-                            newAchievements.push({
-                                id: seriesAchievementId,
-                                seriesId: details.id,
-                                name: details.name,
-                                type: 'series_finish',
-                                date: new Date().toISOString(),
-                                poster_path: details.poster_path
-                            });
-
-                            // Add to Star Series Table (Array)
-                            if (!currentStarSeries.some(s => s.id === details.id)) {
-                                newStarSeries.push({
-                                    id: details.id,
-                                    name: details.name,
-                                    poster_path: details.poster_path,
-                                    date: new Date().toISOString()
-                                });
-                            }
-                        }
-                    }
-
-                    // Commit Updates
-                    const updatePayload = {
-                        watched: arrayUnion(itemToSave)
-                    };
-                    if (newAchievements.length > 0) updatePayload.achievements = arrayUnion(...newAchievements);
-                    if (newStarSeries.length > 0) updatePayload.starSeries = arrayUnion(...newStarSeries);
-
-                    await updateDoc(userRef, updatePayload);
-                    setEpisodeWatchedIDs(prev => [...prev, episode.id]);
-
-                    // FEATURE: Continue Watching Intelligence
-                    // Find Next Episode
-                    let nextEpisode = null;
-                    if (seasonDetails && seasonDetails.episodes) {
-                        const currentIdx = seasonDetails.episodes.findIndex(e => e.id === episode.id);
-                        if (currentIdx !== -1 && currentIdx < seasonDetails.episodes.length - 1) {
-                            nextEpisode = seasonDetails.episodes[currentIdx + 1];
-                        } else if (seasonsValues) {
-                            // Check Next Season
-                            const currentSeasonIdx = seasonsValues.findIndex(s => s.season_number === episode.season_number);
-                            if (currentSeasonIdx !== -1 && currentSeasonIdx < seasonsValues.length - 1) {
-                                const nextSeason = seasonsValues[currentSeasonIdx + 1];
-                                nextEpisode = {
-                                    season_number: nextSeason.season_number,
-                                    episode_number: 1,
-                                    name: "Episode 1", // Fallback name
-                                    seasonPoster: nextSeason.poster_path // Ensure we pass this if available
-                                };
-                            }
-                        }
-                    }
-
-                }
+                // UNMARK ALL
+                await Promise.all(episodesToToggle.map(ep =>
+                    unmarkEpisodeWatched(currentUser.uid, details.id, ep.season_number, ep.episode_number)
+                ));
+                const allKeys = new Set(episodesToToggle.map(ep => `${ep.season_number}-${ep.episode_number}`));
+                setEpisodeWatchedIDs(prev => {
+                    const next = new Set(prev);
+                    for (const k of allKeys) next.delete(k);
+                    return next;
+                });
+                setIsWatched(false);
             }
         } catch (error) {
-            console.error("Error toggling watch:", error);
+            triggerErrorAutomation(error);
+            setIsWatched(!shouldMarkWatched);
         }
     };
 
     const toggleEpisodeWatchlist = async (episode) => {
         if (!currentUser) return;
-        const userRef = doc(db, 'users', currentUser.uid);
 
         // Find correct season poster
-        // We know 'seasonDetails' matches 'selectedSeason'. 
-        // If episode.season_number === selectedSeason, use seasonDetails.poster_path
         const seasonPoster = (seasonDetails && seasonDetails.season_number === episode.season_number)
             ? seasonDetails.poster_path
             : null;
@@ -1063,10 +1094,9 @@ const MovieDetails = () => {
         const itemToSave = {
             id: episode.id,
             name: `${details.name} - S${episode.season_number}E${episode.episode_number}: ${episode.name}`,
-            poster_path: details.poster_path, // Keep Series Poster as main lookup
-            seasonPoster: seasonPoster, // NEW: Specific Season Poster
+            poster_path: details.poster_path,
+            seasonPoster: seasonPoster,
             still_path: episode.still_path,
-            backdrop_path: episode.still_path,
             vote_average: episode.vote_average,
             first_air_date: episode.air_date,
             type: 'episode',
@@ -1074,138 +1104,93 @@ const MovieDetails = () => {
             seriesId: details.id,
             seasonNumber: episode.season_number,
             episodeNumber: episode.episode_number,
-            date: new Date().toISOString()
         };
 
         if (checkEpisodeInWatchlist(episode.id)) {
-            if (userData) {
-                const data = userData;
-                const newWatchlist = (data.watchlist || []).filter(i => i.id !== episode.id);
-                await updateDoc(userRef, { watchlist: newWatchlist });
+            // REMOVE FROM WATCHLIST (Supabase)
+            const success = await watchlistService.removeFromWatchlist(currentUser.uid, episode.id);
+            if (success) {
+                setEpisodeWatchlistIDs(prev => prev.filter(id => id !== episode.id));
             }
-            setEpisodeWatchlistIDs(prev => prev.filter(id => id !== episode.id));
         } else {
-            await updateDoc(userRef, {
-                watchlist: arrayUnion(itemToSave)
-            });
-            setEpisodeWatchlistIDs(prev => [...prev, episode.id]);
-        }
-    };
+            // ADD TO WATCHLIST (Supabase)
+            const success = await watchlistService.addToWatchlist(currentUser.uid, itemToSave);
 
+            if (success) {
+                // STRICT RULE: Reset Watched State
+                setEpisodeWatchedIDs(prev => {
+                    const next = new Set(prev);
+                    next.delete(`${episode.season_number}-${episode.episode_number}`);
+                    return next;
+                });
+                setEpisodeWatchlistIDs(prev => [...new Set([...prev, episode.id])]);
 
-
-    const handleReviewLike = async (reviewId) => {
-        if (!currentUser) return;
-
-        const review = reviewsData.find(r => r.id === reviewId);
-        if (!review) return;
-
-        const hasUserLikedReview = review.likes && review.likes.includes(currentUser.uid);
-        const userRef = doc(db, 'users', currentUser.uid);
-        const reviewRef = doc(db, 'reviews', reviewId);
-
-        try {
-            if (hasUserLikedReview) {
-                // Unlike: Remove UID from review.likes
-                await updateDoc(reviewRef, { likes: arrayRemove(currentUser.uid) });
-
-                // Remove from User Activity (Read-Modify-Write for safe object removal)
-                if (userData) {
-                    const newLikes = (userData.likes || []).filter(l => !(l.type === 'like_review' && l.reviewId === reviewId));
-                    await updateDoc(userRef, { likes: newLikes });
-                }
-
-                // Update Local State
-                setReviewsData(prev => prev.map(r => {
-                    if (r.id === reviewId) {
-                        return { ...r, likes: (r.likes || []).filter(uid => uid !== currentUser.uid) };
-                    }
-                    return r;
-                }));
-
-            } else {
-                // Like: Add UID to review.likes
-                await updateDoc(reviewRef, { likes: arrayUnion(currentUser.uid) });
-
-                // Add to User Activity
-                const activityItem = {
-                    type: 'like_review',
-                    reviewId: review.id,
-                    targetUserId: review.userId,
-                    targetUsername: review.userName || review.author || 'User',
-                    seriesId: details.id,
-                    name: details.name, // Series Name
-                    seasonNumber: review.seasonNumber,
-                    episodeNumber: review.episodeNumber,
-                    poster_path: details.poster_path,
-                    seasonPoster: seasonDetails?.poster_path,
-                    date: new Date().toISOString()
-                };
-                await updateDoc(userRef, { likes: arrayUnion(activityItem) });
-
-                // Update Local State
-                setReviewsData(prev => prev.map(r => {
-                    if (r.id === reviewId) {
-                        return { ...r, likes: [...(r.likes || []), currentUser.uid] };
-                    }
-                    return r;
-                }));
+                // Also unmark in Supabase
+                unmarkEpisodeWatched(currentUser.uid, details.id, episode.season_number, episode.episode_number);
             }
-        } catch (error) {
-            console.error("Error toggling review like:", error);
         }
     };
 
 
 
+
+
+
+
     // Get existing review for an item
     // Get existing review for an item
-    const getExistingReview = (itemId, isEpisode = false, isSeason = false, seasonNum = null) => {
+    const getExistingReview = (itemId, isEpisode = false, isSeason = false, seasonNum = null, episodeNum = null) => {
         if (!currentUser) return null;
         if (isEpisode) {
-            return reviewsData.find(r => r.episodeId === itemId && r.isEpisode && r.userId === currentUser.uid);
+            return reviewsData.find(r =>
+                Number(r.tmdbId) === Number(details.id) &&
+                Number(r.seasonNumber) === Number(seasonNum) &&
+                Number(r.episodeNumber) === Number(episodeNum) &&
+                r.isEpisode &&
+                r.userId === currentUser.uid
+            );
         } else if (isSeason) {
-            return reviewsData.find(r => r.tmdbId === itemId && r.isSeason && r.seasonNumber === seasonNum && r.userId === currentUser.uid);
+            return reviewsData.find(r => Number(r.tmdbId) === Number(itemId) && r.isSeason && Number(r.seasonNumber) === Number(seasonNum) && r.userId === currentUser.uid);
         } else {
             // Series (Default)
-            // Ensure we exclude seasons/episodes
-            return reviewsData.find(r => r.tmdbId === itemId && !r.isEpisode && !r.isSeason && r.userId === currentUser.uid);
+            return reviewsData.find(r => Number(r.tmdbId) === Number(itemId) && !r.isEpisode && !r.isSeason && r.userId === currentUser.uid);
         }
     };
 
-    const handleSeasonReview = (seasonNum) => {
-        const existing = getExistingReview(details.id, false, true, seasonNum); // itemId, isEpisode, isSeason, seasonNum
-        setExistingReviewData(existing || null);
-        setReviewingItem({
-            type: 'season',
-            id: details.id,
-            name: `${details.name} (Season ${seasonNum})`,
-            seasonNumber: seasonNum
-        });
-        setIsReviewOpen(true);
-    };
+
 
     const handleEditReview = (review) => {
-        setExistingReviewData(review);
-        setReviewingItem({
-            type: review.isEpisode ? 'episode' : (review.isSeason ? 'season' : 'series'),
-            id: review.isEpisode ? review.episodeId : review.tmdbId,
-            name: review.topicName || details.name, // generic fallback
-            seasonNumber: review.seasonNumber,
-            episodeNumber: review.episodeNumber
+        const type = review.isEpisode ? 'episode' : (review.isSeason ? 'season' : 'series');
+        const id = review.isEpisode ? review.episodeId : review.tmdbId;
+
+        navigate(`/review/${type}/${id}`, {
+            state: {
+                tmdbId: review.tmdbId,
+                seasonNumber: review.seasonNumber,
+                episodeNumber: review.episodeNumber,
+                name: review.topicName || details.name,
+                poster_path: details.poster_path, // Fallback
+                existingReview: review
+            }
         });
-        setIsReviewOpen(true);
     }
 
     // Review Submit Logic (Common for Series, Season, Episode)
     const handleReviewSubmit = async (data) => {
         if (!currentUser) return;
+        console.log("🚀 handleReviewSubmit STARTED", data);
         const { rating, review } = data;
 
         // Determine Targets
-        let targetId = reviewingItem.id;
+
         let isEpisode = reviewingItem.type === 'episode';
         let isSeason = reviewingItem.type === 'season';
+
+        console.log("🔍 DEBUG: reviewingItem =", reviewingItem);
+        console.log("🔍 DEBUG: isEpisode =", isEpisode, "| isSeason =", isSeason);
+        console.log("🔍 DEBUG: existingReviewData =", existingReviewData);
+
+        let newReview = null; // Fix: Declare here for function-wide scope
 
         // Define Doc Ref (Update if exists, Add if new)
         // We can't use setDoc with custom ID easily unless we enforce ID gen.
@@ -1213,45 +1198,209 @@ const MovieDetails = () => {
 
         try {
             if (existingReviewData && existingReviewData.id) {
-                // UPDATE
-                const reviewRef = doc(db, 'reviews', existingReviewData.id);
-                await updateDoc(reviewRef, {
-                    rating: rating,
-                    review: review,
-                    updatedAt: new Date().toISOString() // Update timestamp? User usually wants 'edited' timestamp or just update.
-                });
-                // Local Update (Optimistic)
-                setReviewsData(prev => prev.map(r => r.id === existingReviewData.id ? { ...r, rating, review, updatedAt: new Date().toISOString() } : r));
+                console.log("✅ ENTERING UPDATE BLOCK");
+                // UPDATE / EDIT FLOW
+                console.log("📝 Editing Review...", existingReviewData);
+
+                if (existingReviewData.source === 'supabase') {
+                    // Update in Supabase
+                    console.log("🔄 Updating Supabase Review...");
+                    if (isSeason) {
+                        await reviewService.updateSeasonReview(existingReviewData.id, review, rating ? parseFloat(rating) : null);
+                        // Update Rating Table too? usually create handles it. Update logic for rating separate?
+                        // ratingsService.setSeasonRating uses upsert, so we can call it.
+                        if (rating) await ratingsService.setSeasonRating(currentUser.uid, parseInt(details.id), reviewingItem.seasonNumber, parseFloat(rating));
+                    } else if (isEpisode) {
+                        await reviewService.updateEpisodeReview(existingReviewData.id, review, rating ? parseFloat(rating) : null);
+                        if (rating) await ratingsService.setEpisodeRating(currentUser.uid, parseInt(details.id), reviewingItem.seasonNumber, reviewingItem.episodeNumber, parseFloat(rating));
+                    }
+
+                    // Local state update
+                    setReviewsData(prev => prev.map(r => r.id === existingReviewData.id ? { ...r, rating: rating.toString(), review, updatedAt: new Date().toISOString() } : r));
+
+                } else {
+                    // Source is Firebase (Legacy) -> MIGRATE TO SUPABASE
+                    // effectively a CREATE in Supabase
+                    console.log("🚀 Migrating Legacy Review to Supabase...");
+
+                    // We treat it as a new creation in Supabase
+                    if (isSeason) {
+                        // Call Create Logic (copied from below or extracted)
+                        const result = await reviewService.createSeasonReview(
+                            currentUser.uid,
+                            parseInt(details.id),
+                            reviewingItem.seasonNumber,
+                            review,
+                            rating ? parseFloat(rating) : null,
+                            userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                            currentUser.photoURL,
+                            details.name,
+                            details.poster_path
+                        );
+                        if (rating) await ratingsService.setSeasonRating(currentUser.uid, parseInt(details.id), reviewingItem.seasonNumber, parseFloat(rating));
+
+                        // We should probably remove the Firebase one to avoid duplicates?
+                        // deleteDoc(doc(db, 'reviews', existingReviewData.id)); // Optional: Delete legacy
+                    } else if (isEpisode) {
+                        const result = await reviewService.createEpisodeReview(
+                            currentUser.uid,
+                            parseInt(details.id),
+                            reviewingItem.seasonNumber,
+                            reviewingItem.episodeNumber,
+                            review,
+                            rating ? parseFloat(rating) : null,
+                            userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                            currentUser.photoURL,
+                            details.name,
+                            details.poster_path
+                        );
+                        if (rating) await ratingsService.setEpisodeRating(currentUser.uid, parseInt(details.id), reviewingItem.seasonNumber, reviewingItem.episodeNumber, parseFloat(rating));
+                    }
+
+                    // Force refresh or local update?
+                    // Ideally we replace the firebase item in local state with the new supabase one.
+                    // But simpler is to allow local state to wait for refresh or just update the object values.
+                    setReviewsData(prev => prev.map(r => r.id === existingReviewData.id ? { ...r, rating: rating.toString(), review, source: 'supabase', updatedAt: new Date().toISOString() } : r));
+                }
+
             } else {
-                // CREATE
-                const reviewDataPayload = {
-                    userId: currentUser.uid,
-                    userName: currentUser.displayName || currentUser.email, // Fallback
-                    author: currentUser.email, // Legacy field support
-                    photoURL: currentUser.photoURL,
-                    tmdbId: parseInt(details.id), // Series ID is common pivot
-                    seriesId: details.id, // Semantic
 
-                    // Discriminators
-                    isEpisode: isEpisode,
-                    isSeason: isSeason,
+                console.log("✅ ENTERING CREATE BLOCK");
+                // CREATE - Use Supabase via reviewService
+                // newReview is already declared at top scope
+                if (isEpisode) {
+                    const result = await reviewService.createEpisodeReview(
+                        currentUser.uid,
+                        parseInt(details.id),
+                        reviewingItem.seasonNumber,
+                        reviewingItem.episodeNumber,
+                        review,
+                        rating ? parseFloat(rating) : null,
+                        userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                        currentUser.photoURL,
+                        details.name,
+                        details.poster_path
+                    );
+                    if (!result.success) {
+                        console.error('Failed to create episode review:', result.error);
+                        return;
+                    }
+                    newReview = result.data;
 
-                    // Specifics
-                    episodeId: isEpisode ? reviewingItem.id : null,
-                    episodeNumber: isEpisode ? reviewingItem.episodeNumber : null,
-                    seasonNumber: isSeason ? reviewingItem.seasonNumber : (isEpisode ? reviewingItem.seasonNumber : null),
+                    // PHASE 2.2: ALSO write rating separately to episode_ratings table
+                    if (rating) {
+                        await ratingsService.setEpisodeRating(
+                            currentUser.uid,
+                            parseInt(details.id),
+                            reviewingItem.seasonNumber,
+                            reviewingItem.episodeNumber,
+                            parseFloat(rating)
+                        );
+                    }
 
-                    rating: rating,
-                    review: review,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                    likes: [],
-                    source: 'app',
-                    topicName: reviewingItem.name, // Store the name of the item being reviewed (series, season, episode)
-                    poster_path: details.poster_path // Add poster path for UserReview page
-                };
+                    // LOG ACTIVITY (Episode Review)
+                    logActivity(userData || currentUser, 'rated_episode', {
+                        seriesId: details.id,
+                        seriesName: details.name,
+                        seasonNumber: reviewingItem.seasonNumber,
+                        episodeNumber: reviewingItem.episodeNumber,
+                        rating: parseFloat(rating),
+                        posterPath: details.poster_path // Series Poster
+                    });
+                } else if (isSeason) {
+                    console.log("📝 Creating Season Review via Supabase...");
+                    const result = await reviewService.createSeasonReview(
+                        currentUser.uid,
+                        parseInt(details.id),
+                        reviewingItem.seasonNumber,
+                        review,
+                        rating ? parseFloat(rating) : null,
+                        userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                        currentUser.photoURL,
+                        details.name,
+                        details.poster_path
+                    );
+                    console.log("📡 Supabase Response:", result);
 
-                const newDocRef = await addDoc(collection(db, 'reviews'), reviewDataPayload);
+                    if (!result.success) {
+                        console.error('Failed to create season review:', result.error);
+                        return;
+                    }
+                    newReview = result.data;
+
+                    // PHASE 2.2: ALSO write rating separately to season_ratings table
+                    if (rating) {
+                        try {
+                            await ratingsService.setSeasonRating(
+                                currentUser.uid,
+                                parseInt(details.id),
+                                reviewingItem.seasonNumber,
+                                parseFloat(rating)
+                            );
+
+                            // DIARY MIGRATION: Log Season Rated
+                            await diaryService.addSeasonRatedEntry(
+                                currentUser.uid,
+                                parseInt(details.id),
+                                reviewingItem.seasonNumber,
+                                parseFloat(rating),
+                                details.name,
+                                seasonDetails?.poster_path || details.poster_path
+                            );
+
+                        } catch (err) {
+                            console.error('Error writing to season_ratings or diary:', err);
+                        }
+                    }
+
+                    // LOG ACTIVITY (Season Review)
+                    logActivity(userData || currentUser, 'rated_season', {
+                        seriesId: details.id,
+                        seriesName: details.name,
+                        seasonNumber: reviewingItem.seasonNumber,
+                        rating: parseFloat(rating),
+                        posterPath: seasonDetails?.poster_path || details.poster_path
+                    });
+                } else {
+                    // SERIES REVIEW (Previously Unhandled Fallthrough)
+                    // We continue using Firestore for Series reviews as they don't have a dedicated Supabase table yet (or based on legacy).
+                    const reviewDataPayload = {
+                        userId: currentUser.uid,
+                        userName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                        tmdbId: parseInt(details.id),
+                        name: details.name,
+                        poster_path: details.poster_path,
+                        rating: parseFloat(rating),
+                        review: review,
+                        updatedAt: new Date().toISOString(),
+                        type: 'series',
+                        isEpisode: false,
+                        isSeason: false,
+                        seasonNumber: null,
+                        episodeNumber: null,
+                        createdAt: new Date().toISOString(),
+                        likes: []
+                    };
+
+                    try {
+                        const newDocRef = await addDoc(collection(db, 'reviews'), reviewDataPayload);
+                        newReview = { ...reviewDataPayload, id: newDocRef.id, source: 'firebase' };
+
+                        // Success badge logic for Series (Silent)
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        await updateDoc(userRef, {
+                            starSeries: arrayUnion({
+                                id: details.id,
+                                name: details.name,
+                                poster_path: details.poster_path,
+                                date: new Date().toISOString()
+                            })
+                        });
+                    } catch (e) {
+                        console.error("Error creating series review:", e);
+                        return;
+                    }
+                }
 
                 // Mark as Watched Logic (Firestore) - Only for Series/Season reviews, not individual episodes
                 if (!isEpisode) {
@@ -1281,80 +1430,215 @@ const MovieDetails = () => {
                     }
                 }
 
-                // Update Local
+                // Safety check: Only update local state if review was created successfully
+                if (!newReview) {
+                    // Review creation failed
+                    // Show a visual warning to user via console or alert if preferred, but for now log is improved.
+                    setIsReviewOpen(false);
+                    return;
+                }
+
+                // Update Local - Format Supabase data to match expected structure
                 setReviewsData(prev => [...prev, {
-                    ...reviewDataPayload,
-                    id: newDocRef.id,
+                    id: newReview.id,
+                    userId: newReview.user_id,
+                    userName: userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                    author: currentUser.email,
+                    photoURL: currentUser.photoURL,
+                    tmdbId: newReview.tmdb_id,
+                    seriesId: details.id,
+                    isEpisode: isEpisode,
+                    isSeason: isSeason,
+                    episodeId: isEpisode ? reviewingItem.id : null,
+                    episodeNumber: newReview.episode_number,
+                    seasonNumber: newReview.season_number,
+                    rating: newReview.rating?.toString(),
+                    review: newReview.review_text,
+                    createdAt: newReview.created_at,
+                    updatedAt: newReview.updated_at,
                     likes: [],
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
+                    source: 'supabase',
+                    topicName: reviewingItem.name,
+                    poster_path: details.poster_path
                 }]);
 
-                // SUCCESS FLOW (Silent Badge Add) - Only for Series/Season reviews
                 if (!isEpisode) {
                     const userRef = doc(db, 'users', currentUser.uid);
-                    await updateDoc(userRef, {
-                        starSeries: arrayUnion({
-                            id: details.id,
-                            name: details.name,
-                            poster_path: details.poster_path,
-                            date: new Date().toISOString()
-                        })
-                    });
+
+                    // STRICT RULE: Remove Season Episodes from Watchlist (Supabase)
+                    if (seasonDetails && seasonDetails.episodes) {
+                        const seasonEpIds = seasonDetails.episodes.map(e => e.id);
+                        const seasonId = seasonDetails.id || Number(`${details.id}${selectedSeason}`);
+                        watchlistService.removeFromWatchlistBulk(currentUser.uid, [seasonId, ...seasonEpIds]);
+
+                        // Local Update
+                        setEpisodeWatchlistIDs(prev => prev.filter(id => !seasonEpIds.includes(id)));
+                    }
+
+                    // For Achievements and Star Series (STILL FIREBASE)
+                    let updates = {};
+                    const userSnap = await getDoc(userRef);
+                    if (userSnap.exists()) {
+                        const data = userSnap.data();
+
+                        // Mark as Watched Logic (Sync with Supabase via Service)
+                        if (seasonDetails && seasonDetails.episodes) {
+                            const currentWatched = data.watched || [];
+                            const seasonEpIds = new Set(seasonDetails.episodes.map(e => e.id));
+                            const existingWatchedIds = new Set(currentWatched.map(i => i.id));
+                            const episodeItems = seasonDetails.episodes.filter(ep => !existingWatchedIds.has(ep.id)).map(ep => ({
+                                id: ep.id,
+                                episodeId: ep.id,
+                                seriesId: details.id,
+                                name: details.name,
+                                episodeName: ep.name,
+                                poster_path: details.poster_path, // Series Poster
+                                still_path: ep.still_path,
+                                vote_average: ep.vote_average,
+                                first_air_date: ep.air_date,
+                                type: 'episode',
+                                date: new Date().toISOString(),
+                                isEpisode: true,
+                                seasonNumber: ep.season_number,
+                                episodeNumber: ep.episode_number
+                            }));
+
+                            if (episodeItems.length > 0) {
+                                await Promise.all(episodeItems.map(ep =>
+                                    markEpisodeWatched(currentUser.uid, details.id, ep.seasonNumber, ep.episodeNumber)
+                                ));
+
+                                setEpisodeWatchedIDs(prev => {
+                                    const next = new Set(prev);
+                                    episodeItems.forEach(ep => next.add(`${ep.seasonNumber}-${ep.episodeNumber}`));
+                                    return next;
+                                });
+                            }
+                        }
+
+                        // NEW: Automatically mark as WATCHED on Review
+                        if (isSeason) {
+                            const success = await markSeasonWatched(currentUser.uid, details.id, reviewingItem.seasonNumber, episodes.length);
+                            if (success) setIsWatched(true);
+                        } else if (isEpisode) {
+                            const epToMark = episodes.find(e => e.episode_number === reviewingItem.episodeNumber);
+                            if (epToMark) {
+                                const success = await markEpisodeWatched(currentUser.uid, details.id, reviewingItem.seasonNumber, reviewingItem.episodeNumber);
+                                if (success) {
+                                    setEpisodeWatchedIDs(prev => new Set(prev).add(`${reviewingItem.seasonNumber}-${reviewingItem.episodeNumber}`));
+                                    watchlistService.removeFromWatchlist(currentUser.uid, epToMark.id);
+                                }
+                            }
+                        }
+
+                        // Star Series Logic
+                        const isAlreadyStar = data.starSeries?.some(s => s.id === details.id);
+                        if (!isAlreadyStar) {
+                            updates.starSeries = arrayUnion({
+                                id: details.id,
+                                name: details.name,
+                                poster_path: details.poster_path,
+                                date: new Date().toISOString()
+                            });
+                        }
+                    }
+
+                    if (Object.keys(updates).length > 0) {
+                        await updateDoc(userRef, updates);
+                        if (updates.watched) setIsWatched(true);
+                    }
+                } else {
+                    // IS EPISODE REVIEW
+                    // STRICT RULE: Remove from Watchlist (Supabase)
+                    const epId = reviewingItem.id;
+                    watchlistService.removeFromWatchlist(currentUser.uid, epId);
+                    setEpisodeWatchlistIDs(prev => prev.filter(id => id !== epId));
                 }
             }
-
-
-            // Trigger Sticker Flow (for new reviews only)
-            // Use reviewingItem which is always available, not reviewDataPayload (only in CREATE block)
-            if (!existingReviewData) {
-                const isEp = isEpisode;
-                const isSe = isSeason;
-
-                let seasonEpisodeText = null;
-                if (isEp) {
-                    seasonEpisodeText = `S${reviewingItem.seasonNumber} E${reviewingItem.episodeNumber}`;
-                } else if (isSe) {
-                    seasonEpisodeText = `S${reviewingItem.seasonNumber}`;
-                }
-
-                setStickerData({
-                    movie: {
-                        name: details.name,
-                        poster_path: details.poster_path,
-                        seasonEpisode: seasonEpisodeText
-                    },
-                    rating: parseFloat(rating),
-                    user: currentUser,
-                    isEpisodes: isEp
-                });
-                setStickerModalOpen(true);
-                setStickerStatus('idle');
-            }
-
         } catch (e) {
             console.error("Error saving review", e);
         }
+
+        // Automatically trigger share sticker for Season Reviews
+        if (isSeason) {
+            const reviewId = newReview ? newReview.id : existingReviewData?.id || 'temp-id-' + Date.now();
+            const freshReviewItem = {
+                id: reviewId,
+                tmdbId: parseInt(details.id),
+                isEpisode, isSeason,
+                seasonNumber: reviewingItem.seasonNumber,
+                episodeNumber: reviewingItem.episodeNumber,
+                rating: parseFloat(rating),
+                review: review,
+                userId: currentUser.uid,
+                userName: userData?.username || currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+                photoURL: currentUser.photoURL,
+                topicName: reviewingItem.name,
+            };
+            handleShare(freshReviewItem, isEpisode, isSeason);
+        }
+
         setIsReviewOpen(false);
     };
 
     const openEpisodeReview = (ep) => {
-        const existing = getExistingReview(ep.id, true);
-        setExistingReviewData(existing || null);
-        setReviewingItem({
-            type: 'episode',
-            id: ep.id,
-            name: `${details.name} S${ep.season_number}E${ep.episode_number}`,
-            seasonNumber: ep.season_number,
-            episodeNumber: ep.episode_number
+        const existing = getExistingReview(details.id, true, false, ep.season_number, ep.episode_number);
+        // Important: Navigate using details.id (Series ID) to ensure ReviewPage has it in params too
+        navigate(`/review/episode/${details.id}`, {
+            state: {
+                tmdbId: details.id,
+                seasonNumber: ep.season_number,
+                episodeNumber: ep.episode_number,
+                name: `${details.name} S${ep.season_number}E${ep.episode_number}`,
+                poster_path: ep.still_path || details.poster_path,
+                existingReview: existing
+            }
         });
-        setIsReviewOpen(true);
+    };
+
+    const handleReviewLike = async (reviewId) => {
+        if (!currentUser) return;
+        const reviewRef = doc(db, 'reviews', reviewId);
+
+        // Optimistic Update
+        setReviewsData(prev => prev.map(r => {
+            if (r.id === reviewId) {
+                const hasLiked = r.likes?.includes(currentUser.uid);
+                return {
+                    ...r,
+                    likes: hasLiked ? r.likes.filter(id => id !== currentUser.uid) : [...(r.likes || []), currentUser.uid]
+                };
+            }
+            return r;
+        }));
+
+        const review = reviewsData.find(r => r.id === reviewId);
+        if (review) {
+            const hasLiked = review.likes?.includes(currentUser.uid);
+            try {
+                if (hasLiked) {
+                    await updateDoc(reviewRef, { likes: arrayRemove(currentUser.uid) });
+                } else {
+                    await updateDoc(reviewRef, { likes: arrayUnion(currentUser.uid) });
+                }
+            } catch (err) {
+                // Revert optimistic update if needed, but usually fine
+                console.error("Failed to toggle like", err);
+            }
+        }
     };
 
 
 
-    const handleAction = async (actionFn) => {
-        await actionFn();
+
+
+    const handleAction = async (actionType, actionFn) => {
+        setActionLoading(prev => ({ ...prev, [actionType]: true }));
+        try {
+            await actionFn();
+        } finally {
+            setActionLoading(prev => ({ ...prev, [actionType]: false }));
+        }
     };
 
     // The old handleReviewSubmit logic is replaced by the new one above.
@@ -1496,21 +1780,23 @@ const MovieDetails = () => {
             }
      
         } catch (error) {
-            console.error("Error saving review: ", error);
+            triggerErrorAutomation(error);
         }
     };
     */
 
-    if (loading) return <div className="loading">Loading...</div>;
-    if (!details) return <div className="loading">Not found</div>;
+    if (loading && !details) return null; // Wait for data or global loader
+    if (!details) return <div className="loading" style={{ color: '#FFD600', textAlign: 'center', marginTop: '100px' }}>Series not found</div>;
 
 
     const date = details.first_air_date;
-    const year = date ? date.split('-')[0] : 'N/A';
+
     const backdropUrl = `https://image.tmdb.org/t/p/original${details.backdrop_path}`;
     // Use Season Poster if seasonDetails exists (and matches selectedSeason, implicit via fetch)
-    const displayPosterPath = seasonDetails?.poster_path || details.poster_path;
-    const posterUrl = `https://image.tmdb.org/t/p/w500${displayPosterPath}`;
+    const rawPosterPath = seasonDetails?.poster_path || details.poster_path;
+    // GLOBAL FIX: Resolve from globalPosters > Fallback to TMDB
+    const resolvedPath = resolvePoster(details.id, rawPosterPath, globalPosters);
+    // posterUrl derived variable removed in favor of state
 
 
 
@@ -1549,51 +1835,68 @@ const MovieDetails = () => {
 
 
     return (
-        <div className="movie-details-container">
-            <div
-                className="backdrop-overlay"
-                style={{
-                    backgroundImage: `linear-gradient(to top, #000000 10%, transparent 90%), url(${backdropUrl})`,
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '60vh',
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    zIndex: -1,
-                    opacity: 0.3
-                }}
-            />
+        <div className="movie-details-container" style={{ background: '#000', minHeight: '100vh' }}>
 
-            <div className="details-content" style={{ marginTop: '5vh', width: '100%', maxWidth: '1000px', margin: '5vh auto 0', padding: '0 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#fff', position: 'relative', zIndex: 1 }}>
+            <div className="details-content" style={{
+                marginTop: '1vh', // SHRUNK (User Req: Reduce top space)
+                width: '100%',
+                maxWidth: '600px', // SHRUNK (Medium Large feel)
+                margin: '1vh auto 0',
+                padding: '0 1rem',
+                display: 'flex',
+                direction: 'column',
+                flexDirection: 'column',
+                alignItems: 'center',
+                color: '#fff',
+                position: 'relative',
+                zIndex: 1
+            }}>
 
                 {/* VISUAL TITLE CARD BOX (Backdrop) with Logo & Fade */}
                 <div style={{
                     width: '100%',
-                    maxWidth: '1000px', // Increased width (though 100% might be too wide, sticking to large container width)
-                    aspectRatio: '16/9',
-                    marginBottom: '-4rem', // Overlap effect
+                    maxWidth: '1000px',
+                    marginBottom: '1rem', // Reduced Gap below logo
                     position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    background: '#000', // Pure Black
+                    background: '#000',
                     borderRadius: '0px',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    minHeight: '100px' // Ensure minimum height for logo
                 }}>
 
                     {/* LOGO OVERLAY (Only Logo, No Backdrop) */}
-                    <div style={{ zIndex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%' }}>
-                        {details.images?.logos?.[0]?.file_path ? (
+                    <div style={{ zIndex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' }}>
+                        {logoFilePath ? (
                             <img
-                                src={`https://image.tmdb.org/t/p/original${details.images?.logos?.[0]?.file_path}`}
+                                src={`https://image.tmdb.org/t/p/original${logoFilePath}`}
                                 alt="Series Logo"
-                                style={{ width: '70%', maxHeight: '70%', objectFit: 'contain', filter: 'drop-shadow(0 0 20px rgba(255,255,255,0.1))' }}
+                                style={{
+                                    width: 'auto',
+                                    maxWidth: '80%', // Shrunk width
+                                    height: 'auto',
+                                    maxHeight: '120px', // Strict height limit
+                                    objectFit: 'contain',
+                                    filter: 'drop-shadow(0 0 20px rgba(255,255,255,0.1))'
+                                }}
                             />
                         ) : (
                             // Fallback if no logo
-                            <h2 style={{ fontSize: '4rem', fontFamily: 'Impact, sans-serif', textTransform: 'uppercase', color: '#333' }}>
+                            <h2 style={{
+                                fontSize: '2rem', // SHRUNK (Medium Large)
+                                fontFamily: 'Impact, sans-serif',
+                                textTransform: 'uppercase',
+                                color: '#ddd',
+                                textAlign: 'center',
+                                padding: '0 10px',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: '100%',
+                                margin: 0
+                            }}>
                                 {title}
                             </h2>
                         )}
@@ -1639,80 +1942,71 @@ const MovieDetails = () => {
                         {/* POSTER CONTAINER REF */}
                         <div ref={posterContainerRef} style={{ position: 'relative', display: 'inline-block' }}>
                             <img
-                                src={posterUrl}
+                                src={posterUrl && !posterUrl.startsWith('http') ? `https://image.tmdb.org/t/p/w500${posterUrl}` : posterUrl}
                                 alt={title}
                                 className="movie-poster"
                                 style={{
                                     width: 'auto',
                                     maxWidth: '90vw',
-                                    height: '55vh', // REDUCED HEIGHT (User Req: ~55-60%)
-                                    maxHeight: '600px',
+                                    height: '30vh', // SHRUNK MORE (30vh)
+                                    maxHeight: '300px', // Strict limit
                                     objectFit: 'cover',
-                                    borderRadius: '12px', // ROUNDED
-                                    boxShadow: '0 20px 60px rgba(0,0,0,0.5)', // Subtle shadow, no drop-shadow
-                                    border: 'none', // NO BORDER
+                                    borderRadius: '6px', // Tighter radius
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                                    border: 'none',
                                 }}
                             />
 
-                            {/* EDIT POSTER BUTTON */}
-                            {seasonProgress.completed && (
+                            {/* EDIT POSTER BUTTON - Only show if season is fully watched */}
+                            {isWatched && (
                                 <>
-                                    <Link
-                                        to={`/tv/${details.id}/season/${selectedSeason}/poster`}
-                                        style={{
-                                            position: 'absolute',
-                                            top: '10px',
-                                            right: '10px',
-                                            background: isEditButtonGlowing ? '#FFD600' : 'rgba(0, 0, 0, 0.7)',
-                                            color: isEditButtonGlowing ? '#000' : '#fff',
-                                            border: isEditButtonGlowing ? '2px solid #FFD600' : '1px solid rgba(255, 255, 255, 0.3)',
-                                            borderRadius: '50%',
-                                            width: '40px',
-                                            height: '40px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            cursor: 'pointer',
-                                            backdropFilter: 'blur(4px)',
-                                            transition: 'all 0.3s ease',
-                                            boxShadow: isEditButtonGlowing ? '0 0 20px rgba(255, 214, 0, 0.6)' : 'none',
-                                            zIndex: 10,
-                                            textDecoration: 'none'
-                                        }}
-                                        title="Edit Season Poster"
-                                    >
-                                        <MdEdit size={20} />
-                                    </Link>
-
-                                    {/* HINT TEXT */}
-                                    {showEditHint && (
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '15px',
-                                            left: '100%',
-                                            marginLeft: '15px',
-                                            background: '#FFD600',
-                                            color: '#000',
-                                            padding: '6px 12px',
-                                            borderRadius: '6px',
-                                            fontSize: '12px',
-                                            fontWeight: 'bold',
-                                            whiteSpace: 'nowrap',
-                                            pointerEvents: 'none',
-                                            animation: 'fadeIn 0.3s ease-out'
-                                        }}>
-                                            You are eligible to edit the poster
-                                            <div style={{
-                                                position: 'absolute',
-                                                left: '-6px',
-                                                top: '50%',
-                                                transform: 'translateY(-50%)',
-                                                borderTop: '6px solid transparent',
-                                                borderBottom: '6px solid transparent',
-                                                borderRight: '6px solid #FFD600'
-                                            }} />
+                                    {/* Edit Button & Hint Wrapper */}
+                                    <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 100, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        <div
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleEditClick();
+                                            }}
+                                            style={{
+                                                background: isEditButtonGlowing ? '#FFD600' : 'rgba(0, 0, 0, 0.7)',
+                                                color: isEditButtonGlowing ? '#000' : '#fff',
+                                                border: isEditButtonGlowing ? '2px solid #FFD600' : '1px solid rgba(255, 255, 255, 0.3)',
+                                                borderRadius: '50%',
+                                                width: '40px',
+                                                height: '40px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                cursor: 'pointer',
+                                                backdropFilter: 'blur(4px)',
+                                                transition: 'all 0.3s ease',
+                                                boxShadow: isEditButtonGlowing ? '0 0 20px rgba(255, 214, 0, 0.6)' : 'none',
+                                            }}
+                                            title="Edit Season Poster"
+                                        >
+                                            <MdEdit size={20} />
                                         </div>
-                                    )}
+
+                                        {/* HINT TEXT: Triggered when showEditHint is true after popup close */}
+                                        {showEditHint && (
+                                            <MobileIndicator
+                                                id={`edit-poster-v2-${details.id}`} // FRESH ID
+                                                message="you are eligible to edit this series poster"
+                                                position="bottom"
+                                                duration={5000}
+                                                style={{ zIndex: 10002, top: '45px', transform: 'translateX(-50%)', left: '50%' }} // Perfect Centering
+                                            />
+                                        )}
+                                    </div>
+
+                                    {/* Like Tip (On Poster) */}
+                                    <MobileIndicator
+                                        id="like-tip"
+                                        message="Mark as favourite ❤️"
+                                        position="bottom"
+                                        style={{ bottom: '20px' }}
+                                    />
                                 </>
                             )}
                         </div>
@@ -1723,30 +2017,30 @@ const MovieDetails = () => {
                 <div style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'flex-start',
+                    alignItems: 'center', // Center Alignment
                     width: '100%',
                     maxWidth: '1000px', // Match top box width
-                    marginBottom: '2rem',
-                    flexWrap: 'wrap',
-                    gap: '30px'
+                    marginBottom: '1rem', // Reduced margin
+                    flexWrap: 'nowrap', // No Wrap if possible
+                    gap: '20px'
                 }}>
 
                     {/* LEFT: Title & Where to Watch */}
-                    <div style={{ flex: 1, minWidth: '350px', textAlign: 'left' }}>
-                        <h1 style={{ fontSize: '4.5rem', textTransform: 'uppercase', fontWeight: '400', margin: '0 0 1rem 0', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '1px', lineHeight: '0.9' }}>
+                    <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+                        <h1 style={{ fontSize: '3rem', textTransform: 'uppercase', fontWeight: '700', margin: '0', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.5px', lineHeight: '1.1' }}>
                             {title}
                         </h1>
 
-                        {/* Where to Watch */}
-                        <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '15px', alignItems: 'center' }}>
-                            <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#888', textTransform: 'uppercase', marginRight: '10px' }}>Where to Watch:</span>
+                        {/* Where to Watch (Inline) */}
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '8px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666', textTransform: 'uppercase' }}>Available on:</span>
                             {watchProviders?.flatrate || watchProviders?.rent || watchProviders?.buy ? (
                                 (watchProviders.flatrate || watchProviders.rent || watchProviders.buy || []).slice(0, 3).map(provider => (
                                     <div key={provider.provider_id} title={provider.provider_name}>
                                         <img
                                             src={`https://image.tmdb.org/t/p/original${provider.logo_path}`}
                                             alt={provider.provider_name}
-                                            style={{ width: '45px', height: '45px', borderRadius: '8px', border: '1px solid #444' }}
+                                            style={{ width: '40px', height: '40px', borderRadius: '8px', border: '1px solid #444', objectFit: 'contain' }} // Shrunk to 40px
                                         />
                                     </div>
                                 ))
@@ -1756,207 +2050,189 @@ const MovieDetails = () => {
                         </div>
                     </div>
 
-                    {/* RIGHT: Ratings Pill -> Emoji Badge */}
-                    <div style={{ flexShrink: 0, alignSelf: 'center' }}>
-                        <div
-                            onClick={() => setIsReviewsOpen(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px',
-                                background: 'rgba(0,0,0,0.6)', padding: '8px 20px',
-                                borderRadius: '50px', border: '1px solid #333',
-                                cursor: 'pointer'
-                            }}>
-                            <span style={{ fontSize: '2rem', lineHeight: 1 }}>
-                                {seasonStats.count === 0 ? getEmoji(0) : getEmoji(parseFloat(seasonStats.avg))}
-                            </span>
-                            <span style={{ color: '#46d369', fontSize: '1.5rem', fontWeight: '900', fontFamily: 'Inter, sans-serif' }}>
-                                {seasonStats.avg}
-                            </span>
-                        </div>
+                    <div
+                        onClick={() => {
+                            const isSeason = selectedSeason && Number(selectedSeason) > 0;
+                            const path = isSeason
+                                ? `/tv/${details.id}/season/${selectedSeason}/reviews`
+                                : `/tv/${details.id}/reviews`;
+                            navigate(path);
+                        }}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '6px', // Tighter gap
+                            background: 'rgba(255,255,255,0.1)', // Subtle bg
+                            padding: '4px 12px', // Shrunk padding
+                            borderRadius: '20px', border: '1px solid #333',
+                            cursor: 'pointer'
+                        }}>
+                        <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>
+                            {seasonStats.count === 0 ? getEmoji(0) : getEmoji(parseFloat(seasonStats.avg))}
+                        </span>
+                        <span style={{ color: '#46d369', fontSize: '1rem', fontWeight: 'bold', fontFamily: 'Inter, sans-serif' }}>
+                            {seasonStats.avg}
+                        </span>
                     </div>
-
                 </div>
 
-                {/* Action Bar (Redesigned) */}
-                <div className="action-bar" style={{
-                    display: 'flex',
-                    gap: '0',
-                    borderTop: '2px solid #555',
-                    borderBottom: '2px solid #555',
-                    padding: '20px 0', // Increased padding
-                    width: '100%',
-                    justifyContent: 'center',
-                    flexWrap: 'wrap',
-                    background: '#000',
-                    marginBottom: '3rem'
-                }}>
-                    <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'nowrap', overflowX: 'auto' }}>
-                        {/* REVIEW */}
-                        <button
-                            className="action-btn-responsive"
-                            onClick={() => {
-                                if (seasonNumber) {
-                                    setExistingReviewData(userSeasonReview || null);
-                                    setReviewingItem({
-                                        type: 'season',
-                                        id: details.id,
-                                        name: details.name,
-                                        seasonNumber: Number(seasonNumber)
-                                    });
-                                } else {
-                                    setExistingReviewData(userSeriesReview || null);
-                                    setReviewingItem({ type: 'series', id: details.id, name: details.name });
-                                }
-                                setIsReviewOpen(true);
-                            }}
-                            style={{
-                                background: (seasonNumber ? userSeasonReview : userSeriesReview) ? '#fff' : '#FFCC00',
-                                color: '#000',
-                                border: `2px solid ${(seasonNumber ? userSeasonReview : userSeriesReview) ? '#fff' : '#FFCC00'}`,
-                                padding: '12px 30px',
-                                fontSize: '1.1rem',
-                                fontWeight: '900',
-                                cursor: 'pointer',
-                                textTransform: 'uppercase',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                borderRadius: '0px',
-                                outline: 'none',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                zIndex: 1,
-                                transition: 'all 0.3s ease'
-                            }}
-                        >
-                            <MdRateReview size={20} /> {(seasonNumber ? userSeasonReview : userSeriesReview) ? `Rated (${(seasonNumber ? userSeasonReview : userSeriesReview).rating})` : 'Review'}
-                        </button>
+            </div>
+
+            {/* Action Bar (Realigned & Compact) */}
+            {/* Action Bar (Clean Icon Style) */}
+            <div className="action-bar" style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '40px', // Spacing between actions
+                width: '100%',
+                padding: '10px 0',
+                marginBottom: '1.5rem',
+                flexWrap: 'wrap'
+            }}>
+
+                {/* MY LIST (Watchlist) */}
+                <div
+                    onClick={() => handleAction('watchlist', async () => {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        if (!(await checkAuth())) return;
+                        await toggleWatchlist();
+                    })}
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '5px',
+                        cursor: 'pointer',
+                        color: '#fff',
+                        minWidth: '60px'
+                    }}
+                >
+                    {actionLoading.watchlist ? (
+                        <div style={{ height: '28px', display: 'flex', alignItems: 'center' }}><ButtonLoader size="24px" /></div>
+                    ) : (
+                        inWatchlist ? <MdCheck size={28} color="#fff" /> : <MdAdd size={28} color="#fff" />
+                    )}
+                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: '#ccc' }}>My List</span>
+                </div>
+
+                {/* RATE (Review) */}
+                <div
+                    onClick={() => {
+                        // NEW: Navigate to ReviewPage
+                        const isSeason = selectedSeason && Number(selectedSeason) > 0;
+                        const reviewType = isSeason ? 'season' : 'series';
+                        const existing = isSeason ? userSeasonReview : userSeriesReview;
+
+                        navigate(`/review/${reviewType}/${details.id}`, {
+                            state: {
+                                tmdbId: details.id,
+                                seasonNumber: isSeason ? Number(selectedSeason) : null,
+                                episodeNumber: null,
+                                name: isSeason ? `${details.name} Season ${selectedSeason}` : details.name,
+                                poster_path: details.poster_path,
+                                existingReview: existing,
+                                totalEpisodes: isSeason ? episodes.length : 0 // Pass for auto-watched logic
+                            }
+                        });
+                    }}
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '5px',
+                        cursor: 'pointer',
+                        color: '#fff',
+                        minWidth: '60px'
+                    }}
+                >
+                    {/* Using MdStarBorder for "Rate" as generic, or filled if rated */}
+                    {(selectedSeason > 0 ? userSeasonReview : userSeriesReview) ? <MdStar size={28} color="#FFD600" /> : <MdStarBorder size={28} color="#fff" />}
+                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: (selectedSeason > 0 ? userSeasonReview : userSeriesReview) ? '#FFD600' : '#ccc' }}>Rate</span>
+                </div>
 
 
-                        {/* Star Badge Popup */}
-
-
-                        {/* SHARE (Only if Reviewed) */}
-                        {(seasonNumber ? userSeasonReview : userSeriesReview) && (
-                            <button
-                                className="action-btn-responsive"
-                                onClick={() => handleAction(async () => {
-                                    handleShare((seasonNumber ? userSeasonReview : userSeriesReview), false, !!seasonNumber);
-                                })}
-                                style={{
-                                    background: '#FFCC00',
-                                    color: '#000',
-                                    border: '2px solid #FFCC00',
-                                    padding: '12px 30px',
-                                    fontSize: '1.1rem',
-                                    fontWeight: '900',
-                                    cursor: 'pointer',
-                                    textTransform: 'uppercase',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '10px',
-                                    borderRadius: '0px',
-                                    outline: 'none',
-                                    position: 'relative',
-                                    overflow: 'hidden',
-                                    zIndex: 1,
-                                    transition: 'all 0.3s ease'
-                                }}
-                            >
-                                <MdIosShare size={20} /> SHARE
-                            </button>
+                {/* SHARE */}
+                {(selectedSeason > 0 ? userSeasonReview : userSeriesReview) && (
+                    <div
+                        onClick={() => handleAction('share', async () => {
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                            handleShare((selectedSeason > 0 ? userSeasonReview : userSeriesReview), false, selectedSeason > 0);
+                        })}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '5px',
+                            cursor: 'pointer',
+                            color: '#fff',
+                            minWidth: '60px'
+                        }}
+                    >
+                        {actionLoading.share ? (
+                            <div style={{ height: '28px', display: 'flex', alignItems: 'center' }}><ButtonLoader size="24px" /></div>
+                        ) : (
+                            <MdIosShare size={28} color="#fff" />
                         )}
-
-
-
-                        {/* SEASON REVIEW REMOVED */}
-
-                        {/* WATCHED */}
-                        <button
-                            className="action-btn-responsive"
-                            onClick={() => handleAction(async () => {
-                                if (!(await checkAuth())) return;
-                                toggleWatched();
-                            })}
-                            style={{
-                                background: isWatched ? '#fff' : '#FFCC00',
-                                color: '#000',
-                                border: `2px solid ${isWatched ? '#fff' : '#FFCC00'}`,
-                                padding: '12px 30px',
-                                fontSize: '1.1rem',
-                                fontWeight: '900',
-                                cursor: 'pointer',
-                                textTransform: 'uppercase',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                borderRadius: '0px',
-                                outline: 'none',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                zIndex: 1,
-                                transition: 'all 0.3s ease'
-                            }}
-                        >
-                            {isWatched ? <MdVisibility size={20} /> : <MdVisibilityOff size={20} />} WATCHED
-                        </button>
-
-                        <button
-                            className="action-btn-responsive"
-                            onClick={() => handleAction(async () => {
-                                if (!(await checkAuth())) return;
-                                toggleWatchlist();
-                            })}
-                            style={{
-                                background: inWatchlist ? '#fff' : '#FFCC00',
-                                color: '#000',
-                                border: `2px solid ${inWatchlist ? '#fff' : '#FFCC00'}`,
-                                padding: '12px 30px',
-                                fontSize: '1.1rem',
-                                fontWeight: '900',
-                                cursor: 'pointer',
-                                textTransform: 'uppercase',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '10px',
-                                borderRadius: '0px',
-                                outline: 'none',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                zIndex: 1,
-                                transition: 'all 0.3s ease'
-                            }}
-                        >
-                            {inWatchlist ? <MdCheck size={20} /> : <MdAdd size={20} />} WATCHLIST
-                        </button>
+                        <span style={{ fontSize: '0.85rem', fontWeight: '500', color: '#ccc' }}>Share</span>
                     </div>
+                )}
+
+
+                {/* WATCHED (Track) */}
+                <div
+                    onClick={() => handleAction('watched', async () => {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        if (!(await checkAuth())) return;
+                        await toggleSeasonWatched();
+                    })}
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '5px',
+                        cursor: 'pointer',
+                        color: '#fff',
+                        minWidth: '60px'
+                    }}
+                >
+                    {actionLoading.watched ? (
+                        <div style={{ height: '28px', display: 'flex', alignItems: 'center' }}><ButtonLoader size="24px" /></div>
+                    ) : (
+                        isWatched ? <MdVisibility size={28} color="#46d369" /> : <MdVisibilityOff size={28} color="#fff" />
+                    )}
+                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: isWatched ? '#46d369' : '#ccc' }}>Watched</span>
                 </div>
 
-                {/* Overview (Redesigned) */}
-                <div className="overview" style={{ textAlign: 'center', maxWidth: '800px', margin: '0 auto 2rem' }}>
-                    <h3 style={{ borderBottom: '1px solid #333', paddingBottom: '0.5rem', marginBottom: '1rem', color: '#FFCC00' }}>
-                        {seasonDetails && seasonDetails.name ? seasonDetails.name : 'Overview'}
-                    </h3>
-                    <p style={{ lineHeight: '1.6', fontSize: '1.1rem', color: '#ddd' }}>
-                        {seasonDetails?.overview || details.overview || "No overview available."}
-                    </p>
-                </div>
+            </div>
 
-
-            </div >
+            {/* Overview (truncated) */}
+            <div className="overview" style={{ textAlign: 'center', maxWidth: '800px', margin: '0 auto 1.5rem', padding: '0 15px' }}>
+                <p style={{
+                    lineHeight: '1.4',
+                    fontSize: '1rem',
+                    color: '#ccc',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 3, // TRUNCATE (Important points only)
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden'
+                }}>
+                    {seasonDetails?.overview || details.overview || "No overview available."}
+                </p>
+            </div>
 
             {/* Episodes List - Full Width below? Or Sidebar? User image showed list. Let's put it full width below content OR in the main column. 
                     Actually, let's put it in a separate container below the top section.
                 */}
 
-            < div className="episodes-wrapper" style={{ width: '100%', maxWidth: '1000px', margin: '0 auto' }}>
+            <div className="episodes-wrapper" style={{ width: '100%', maxWidth: '1000px', margin: '0 auto' }}>
 
 
 
                 {/* Episodes List - Integrated in Info Column */}
-                < div style={{ marginTop: '2rem', marginBottom: '2rem' }}>
+                <div style={{ marginTop: '2rem', marginBottom: '2rem' }}>
                     <h3 style={{ color: '#FFCC00', borderBottom: '1px solid #333', paddingBottom: '0.5rem', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        Episodes
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '1.3rem', fontWeight: 'bold', borderBottom: '3px solid #E50914', paddingBottom: '14px', color: '#fff' }}>Episodes</span>
+                        </div>
                         {seasonsValues.length > 0 && (
                             <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginRight: '10px' }}>
 
@@ -1972,95 +2248,48 @@ const MovieDetails = () => {
                                         )
                                     */}
 
-                                <div style={{ position: 'relative' }}>
-                                    <button
-                                        onClick={() => setIsSeasonOpen(!isSeasonOpen)}
-                                        style={{
-                                            background: '#333', // Grey button bg
-                                            color: 'white', // White text
-                                            border: 'none',
-                                            padding: '8px 20px',
-                                            borderRadius: '4px',
-                                            fontSize: '1rem',
-                                            cursor: 'pointer',
-                                            outline: 'none',
-                                            fontWeight: 'bold', // "Amazon Prime Bold"
-                                            textTransform: 'uppercase',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '12px',
-                                            width: 'auto', // Auto width
-                                            minWidth: '150px', // Increased width
-                                            height: '40px',
-                                            justifyContent: 'space-between',
-                                            whiteSpace: 'nowrap' // No Newline
-                                        }}
-                                    >
-                                        {getSeasonName(selectedSeason)}
-                                        <MdKeyboardArrowDown
-                                            size={24}
+                                {/* Season Swipeable List (Horizontal) */}
+                                <div style={{
+                                    display: 'flex',
+                                    gap: '10px',
+                                    overflowX: 'auto',
+                                    padding: '5px 0 15px 0',
+                                    width: '100%',
+                                    maxWidth: '100%',
+                                    scrollbarWidth: 'none', // Hide scrollbar Firefox
+                                    msOverflowStyle: 'none',  // Hide scrollbar IE/Edge
+                                    WebkitOverflowScrolling: 'touch' // Smooth scrolling iOS
+                                }}>
+                                    <style>
+                                        {`
+                                            .season-swipe-container::-webkit-scrollbar {
+                                                display: none;
+                                            }
+                                        `}
+                                    </style>
+                                    {seasonsValues.map(s => (
+                                        <button
+                                            key={s.id}
+                                            onClick={() => handleSeasonChange({ target: { value: s.season_number } })}
+                                            className="season-swipe-container"
                                             style={{
-                                                transform: isSeasonOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                                                transition: 'transform 0.3s ease'
+                                                background: selectedSeason === s.season_number ? '#E50914' : '#333',
+                                                color: 'white',
+                                                border: 'none',
+                                                padding: '8px 16px',
+                                                borderRadius: '20px',
+                                                fontSize: '0.9rem',
+                                                cursor: 'pointer',
+                                                whiteSpace: 'nowrap',
+                                                fontWeight: 'bold',
+                                                transition: 'all 0.2s ease',
+                                                flexShrink: 0,
+                                                boxShadow: selectedSeason === s.season_number ? '0 4px 10px rgba(229, 9, 20, 0.4)' : 'none'
                                             }}
-                                        />
-                                    </button>
-
-
-
-                                    {/* Dropdown / Overlay */}
-                                    <div
-                                        style={{
-                                            position: 'absolute',
-                                            top: 'calc(100% + 5px)', // Tighter spacing
-                                            left: 0,
-                                            width: '100%', // Match button width
-                                            minWidth: '150px',
-                                            background: '#000', // Pure Black
-                                            border: '1px solid #333',
-                                            borderRadius: '4px', // Slight rounding
-                                            boxShadow: '0 10px 40px rgba(0,0,0,0.8)',
-                                            zIndex: 100,
-                                            opacity: isSeasonOpen ? 1 : 0,
-                                            transform: isSeasonOpen ? 'translateY(0)' : 'translateY(-10px)',
-                                            pointerEvents: isSeasonOpen ? 'auto' : 'none',
-                                            transition: 'all 0.2s ease-out',
-                                            overflow: 'hidden',
-                                            maxHeight: '300px',
-                                            overflowY: 'auto'
-                                        }}
-                                    >
-                                        {seasonsValues.map(s => (
-                                            <div
-                                                key={s.id}
-                                                onClick={() => {
-                                                    handleSeasonChange({ target: { value: s.season_number } });
-                                                    setIsSeasonOpen(false);
-                                                }}
-                                                className="season-item"
-                                                style={{
-                                                    padding: '10px 20px',
-                                                    color: 'white',
-                                                    cursor: 'pointer',
-                                                    borderBottom: '1px solid #222',
-                                                    background: selectedSeason === s.season_number ? '#333' : 'transparent', // Grey for selected
-                                                    fontWeight: 'bold', // Bold Text
-                                                    textTransform: 'uppercase', // Full Capital
-                                                    transition: 'background 0.2s',
-                                                    whiteSpace: 'nowrap',
-                                                    fontSize: '0.9rem'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    if (selectedSeason !== s.season_number) e.currentTarget.style.background = '#1a1a1a';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    if (selectedSeason !== s.season_number) e.currentTarget.style.background = 'transparent';
-                                                }}
-                                            >
-                                                {s.name || `SEASON ${s.season_number}`}
-                                            </div>
-                                        ))}
-                                    </div>
+                                        >
+                                            {s.name || `Season ${s.season_number}`}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         )}
@@ -2068,15 +2297,16 @@ const MovieDetails = () => {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {/* Season Action Buttons */}
 
-                        {episodes.map(ep => {
-                            const epReviews = reviewsData.filter(r => r.tmdbId === parseInt(id) && r.seasonNumber === selectedSeason && r.episodeNumber === ep.episode_number && r.isEpisode);
-                            const epCount = epReviews.length;
-                            const epAvg = epCount > 0
-                                ? (epReviews.reduce((acc, r) => acc + (parseFloat(r.rating) || 0), 0) / epCount).toFixed(1)
-                                : "0.0";
+                        {episodes.map((ep, index) => {
+                            const epReviews = reviewsData.filter(r =>
+                                Number(r.tmdbId) === Number(id) &&
+                                Number(r.seasonNumber) === Number(selectedSeason) &&
+                                Number(r.episodeNumber) === Number(ep.episode_number) &&
+                                r.isEpisode
+                            );
 
                             // User Rating (if any)
-                            const userReview = getExistingReview(ep.id, true);
+                            const userReview = getExistingReview(details.id, true, false, ep.season_number, ep.episode_number);
 
                             return (
                                 <div
@@ -2085,161 +2315,158 @@ const MovieDetails = () => {
                                     style={{
                                         display: 'flex',
                                         flexDirection: 'column',
-                                        gap: '10px',
-                                        padding: '20px 0',
-                                        borderBottom: '1px solid #333',
+                                        gap: '8px',
+                                        padding: '15px 0',
+                                        borderBottom: '1px solid #222',
                                         cursor: 'pointer',
-                                        transition: 'background 0.2s',
                                     }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                                 >
-                                    <div style={{ display: 'flex', gap: '25px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                                        {/* Poster Section with Centered Buttons */}
-                                        <div className="responsive-episode-img" style={{ width: '178px', minWidth: '178px', position: 'relative', flexShrink: 0 }}>
+                                    {/* Top Row: Thumbnail | Info | Review Icon */}
+                                    <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+
+                                        {/* Thumbnail (Overlays Added) */}
+                                        <div style={{ position: 'relative', width: '130px', minWidth: '130px', height: '74px' }}>
                                             {ep.still_path ? (
                                                 <img
                                                     src={`https://image.tmdb.org/t/p/w300${ep.still_path}`}
                                                     alt={ep.name}
-                                                    style={{ width: '100%', borderRadius: '4px', height: '100px', objectFit: 'cover' }}
+                                                    style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }}
                                                 />
                                             ) : (
-                                                <div style={{ width: '100%', height: '100px', borderRadius: '4px', border: '1px solid #333', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <div style={{ width: '100%', height: '100%', background: '#222', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                    <span style={{ color: '#555', fontSize: '0.8rem' }}>No Image</span>
                                                 </div>
                                             )}
-                                            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', gap: '8px', zIndex: 5 }}>
-                                                <button
-                                                    onClick={async (e) => {
-                                                        e.stopPropagation();
-                                                        if (!(await checkAuth())) return;
-                                                        toggleEpisodeWatchlist(ep);
-                                                    }}
-                                                    style={{
-                                                        background: 'rgba(0,0,0,0.7)',
-                                                        color: checkEpisodeInWatchlist(ep.id) ? '#FFCC00' : 'white',
-                                                        border: '1px solid rgba(255,255,255,0.2)',
-                                                        padding: '0',
-                                                        cursor: 'pointer',
-                                                        borderRadius: '50%',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        width: '36px',
-                                                        height: '36px',
-                                                        transition: 'all 0.2s'
-                                                    }}
-                                                    title={checkEpisodeInWatchlist(ep.id) ? "Remove from Watchlist" : "Add to Watchlist"}
-                                                >
-                                                    {checkEpisodeInWatchlist(ep.id) ? <MdRemove size={18} /> : <MdAdd size={18} />}
-                                                </button>
-                                                <button
-                                                    onClick={async (e) => {
-                                                        e.stopPropagation();
-                                                        if (!(await checkAuth())) return;
-                                                        toggleEpisodeWatched(ep);
-                                                    }}
-                                                    style={{
-                                                        background: 'rgba(0,0,0,0.7)',
-                                                        color: checkEpisodeWatched(ep.id) ? '#00e054' : 'white',
-                                                        border: '1px solid rgba(255,255,255,0.2)',
-                                                        padding: '0',
-                                                        cursor: 'pointer',
-                                                        borderRadius: '50%',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        width: '36px',
-                                                        height: '36px',
-                                                        transition: 'all 0.2s'
-                                                    }}
-                                                    title={checkEpisodeWatched(ep.id) ? "Mark as Unwatched" : "Mark as Watched"}
-                                                >
-                                                    {checkEpisodeWatched(ep.id) ? <MdVisibility size={18} /> : <MdVisibilityOff size={18} />}
-                                                </button>
-                                            </div>
-                                        </div>
 
-                                        {/* Content Column: Info, Overview, Actions */}
-                                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '200px' }}>
-                                            {/* Header Info */}
-                                            <div>
-                                                <h4 style={{ margin: 0, fontSize: '1.4rem', color: '#fff', fontWeight: 'bold' }}>
-                                                    {ep.episode_number}. {ep.name}
-                                                </h4>
-                                                <div style={{ color: '#999', fontSize: '0.95rem', marginTop: '4px', fontWeight: '500' }}>
-                                                    {ep.runtime ? `${Math.floor(ep.runtime / 60)}h ${ep.runtime % 60}m` : ''}
-                                                </div>
-                                            </div>
-
-                                            {/* Overview */}
-                                            <p style={{ color: '#ccc', fontSize: '1.1rem', lineHeight: '1.5', margin: '0', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                                {ep.overview || "No overview available."}
-                                            </p>
-
-                                            {/* Bottom Actions Row */}
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginTop: '5px', flexWrap: 'wrap' }}>
-
-                                                {/* Episode Rating Badge */}
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#000', padding: '4px 10px', borderRadius: '4px', border: '1px solid #333' }}>
-                                                    <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>{getEmoji(parseFloat(epAvg))}</span>
-                                                    <span style={{ color: '#46d369', fontWeight: 'bold', fontSize: '1rem' }}>{epAvg}</span>
-                                                </div>
-
-                                                {/* Review Button */}
+                                            {/* Action Buttons Overlay (Top Right) */}
+                                            <div style={{ position: 'absolute', top: '5px', right: '5px', display: 'flex', gap: '6px' }}>
+                                                {/* WATCHLIST TOGGLE */}
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        openEpisodeReview(ep);
+                                                        toggleEpisodeWatchlist(ep);
                                                     }}
-                                                    className="btn-secondary episode-review-btn-mobile"
                                                     style={{
-                                                        background: 'transparent',
-                                                        color: '#46d369',
+                                                        background: 'rgba(0,0,0,0.6)',
                                                         border: 'none',
-                                                        padding: '0',
-                                                        cursor: 'pointer',
-                                                        fontSize: '0.9rem',
+                                                        borderRadius: '4px',
+                                                        padding: '4px',
                                                         display: 'flex',
                                                         alignItems: 'center',
-                                                        gap: '6px',
-                                                        fontWeight: 'bold',
-                                                        textTransform: 'uppercase'
+                                                        justifyContent: 'center',
+                                                        cursor: 'pointer',
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                                                        zIndex: 10
                                                     }}
                                                 >
-                                                    <MdRateReview size={16} /> {userReview ? `Rated (${userReview.rating})` : 'Review'}
+                                                    {checkEpisodeInWatchlist(ep.id) ? (
+                                                        <MdCheck size={18} color="#FFD600" />
+                                                    ) : (
+                                                        <MdAdd size={18} color="#fff" />
+                                                    )}
                                                 </button>
 
-                                                {userReview && (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleShare(userReview, true);
-                                                        }}
-                                                        style={{
-                                                            background: 'transparent',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            padding: '0',
-                                                            cursor: 'pointer',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            fontSize: '0.85rem',
-                                                            gap: '6px',
-                                                            fontWeight: 'bold',
-                                                            textTransform: 'uppercase'
-                                                        }}
-                                                    >
-                                                        <MdIosShare size={16} /> Share
-                                                    </button>
-                                                )}
+                                                {/* WATCHED TOGGLE */}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleEpisodeWatched(ep);
+                                                    }}
+                                                    style={{
+                                                        background: 'rgba(0,0,0,0.6)',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        padding: '4px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        cursor: 'pointer',
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                                                        zIndex: 10
+                                                    }}
+                                                >
+                                                    {episodeWatchedIDs.has(`${ep.season_number}-${ep.episode_number}`) ? (
+                                                        <MdVisibility size={18} color="#46d369" />
+                                                    ) : (
+                                                        <MdVisibilityOff size={18} color="#fff" />
+                                                    )}
+                                                </button>
                                             </div>
                                         </div>
+
+                                        {/* Info: Title & Duration */}
+                                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                            <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem', color: '#fff', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {index + 1}. {ep.name}
+                                            </h4>
+                                            <span style={{ color: '#888', fontSize: '0.85rem' }}>
+                                                {ep.runtime ? `${ep.runtime}m` : ''}
+                                            </span>
+                                        </div>
+
+                                        {/* Review/Action Icon (Right Aligned) */}
+                                        <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    openEpisodeReview(ep);
+                                                }}
+                                                style={{
+                                                    background: 'transparent',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    padding: '8px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
+                                            >
+                                                {userReview ? (
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', color: '#FFD600' }}>
+                                                            {parseFloat(userReview.rating) % 1 === 0 ? <MdStar size={24} /> : <MdStarHalf size={24} />}
+                                                            <span style={{ fontSize: '0.9rem', fontWeight: 'bold', marginLeft: '2px' }}>{userReview.rating}</span>
+                                                        </div>
+                                                        <MdIosShare
+                                                            size={20}
+                                                            color="#aaa"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleShare(userReview, true, false);
+                                                            }}
+                                                            style={{ transition: 'color 0.2s' }}
+                                                            onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                                                            onMouseLeave={(e) => e.currentTarget.style.color = '#aaa'}
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <MdStarBorder size={24} color="#666" />
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
+
+                                    {/* Bottom Row: Overview */}
+                                    <p style={{
+                                        margin: '0',
+                                        fontSize: '0.9rem',
+                                        color: '#aaa',
+                                        lineHeight: '1.4',
+                                        display: '-webkit-box',
+                                        WebkitLineClamp: 2,
+                                        WebkitBoxOrient: 'vertical',
+                                        overflow: 'hidden'
+                                    }}>
+                                        {ep.overview || "No overview available."}
+                                    </p>
+
                                 </div>
                             );
                         })}
                     </div>
-                </div >
+                </div>
             </div >
 
             {/* CAST & CREW */}
@@ -2267,326 +2494,163 @@ const MovieDetails = () => {
             </div >
 
             {/* RELATED SERIES */}
-            {details.recommendations?.results?.length > 0 && (() => {
-                // Logic: Prioritize Shared Genres & Popularity
-                const related = details.recommendations.results
-                    .filter(rec => {
-                        if (!rec.poster_path) return false;
-                        if (!details.genres) return true; // Keep if we have no genre info to compare
-                        const myGenres = details.genres.map(g => g.id);
-                        return rec.genre_ids?.some(id => myGenres.includes(id));
-                    })
-                    .slice(0, 10); // Limit to top 10 relevant
+            {
+                details.recommendations?.results?.length > 0 && (() => {
+                    // Logic: Prioritize Shared Genres & Popularity
+                    const related = details.recommendations.results
+                        .filter(() => false) // Disabled as requested
+                        .slice(0, 0);
 
-                if (related.length === 0) return null;
+                    if (related.length === 0) return null;
 
-                return (
-                    <div style={{ marginTop: '3rem', marginBottom: '2rem' }}>
-                        <h3 style={{ borderBottom: '1px solid #333', paddingBottom: '0.5rem', marginBottom: '1rem', color: '#FFCC00' }}>Related Series</h3>
-                        <div style={{ display: 'flex', overflowX: 'auto', gap: '15px', paddingBottom: '10px' }} className="hide-scrollbar">
-                            {related.map(series => (
-                                <div
-                                    key={series.id}
-                                    onClick={() => {
-                                        navigate(`/tv/${series.id}`);
-                                        window.scrollTo(0, 0);
-                                    }}
-                                    style={{ flex: '0 0 auto', width: '140px', cursor: 'pointer' }}
-                                >
-                                    <img
-                                        src={`https://image.tmdb.org/t/p/w300${series.poster_path}`}
-                                        alt={series.name}
-                                        style={{ width: '100%', borderRadius: '6px', height: '210px', objectFit: 'cover', transition: 'transform 0.2s' }}
-                                        onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-                                        onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                );
-            })()}
-
-
-
-
-            {/* --- NEW STORY STICKER MODAL --- */}
-            {stickerModalOpen && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-                    background: 'rgba(0,0,0,0.95)', zIndex: 10000,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexDirection: 'column'
-                }}>
-
-
-                    {stickerStatus === 'preparing' && <LoadingPopup />}
-
-
-                    {stickerStatus === 'ready' && generatedStickerImage && (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', height: '100%' }}>
-                            {/* Preview Image (Scaled Down for Viewport) */}
-                            <div style={{
-                                flex: 1,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: '20px',
-                                width: '100%',
-                                maxWidth: '400px' // Limit width to simulate phone screen
-                            }}>
-                                <img
-                                    src={generatedStickerImage}
-                                    alt="Sticker Preview"
-                                    style={{
-                                        width: '100%',
-                                        height: 'auto',
-                                        borderRadius: '16px',
-                                        boxShadow: '0 0 40px rgba(0,0,0,0.5)',
-                                        border: '1px solid #333'
-                                    }}
-                                />
-                            </div>
-
-                            {/* Actions */}
-                            <div style={{
-                                padding: '30px',
-                                display: 'flex',
-                                gap: '20px',
-                                width: '100%',
-                                justifyContent: 'center',
-                                background: '#000',
-                                borderTop: '1px solid #222'
-                            }}>
-                                <button
-                                    onClick={closeStickerModal}
-                                    style={{
-                                        background: '#333', color: 'white',
-                                        padding: '16px 32px', borderRadius: '50px',
-                                        fontSize: '16px', fontWeight: 'bold', border: 'none'
-                                    }}
-                                >
-                                    Close
-                                </button>
-                                <button
-                                    onClick={handleShareSticker}
-                                    style={{
-                                        background: '#FFD600', color: 'black',
-                                        padding: '16px 32px', borderRadius: '50px',
-                                        fontSize: '16px', fontWeight: 'bold', border: 'none',
-                                        display: 'flex', alignItems: 'center', gap: '10px'
-                                    }}
-                                >
-                                    <MdIosShare size={20} />
-                                    Share
-                                </button>
+                    return (
+                        <div style={{ marginTop: '3rem', marginBottom: '2rem' }}>
+                            <h3 style={{ borderBottom: '1px solid #333', paddingBottom: '0.5rem', marginBottom: '1rem', color: '#FFCC00' }}>Related Series</h3>
+                            <div style={{ display: 'flex', overflowX: 'auto', gap: '15px', paddingBottom: '10px' }} className="hide-scrollbar">
+                                {related.map(series => (
+                                    <div
+                                        key={series.id}
+                                        onClick={() => {
+                                            navigate(`/tv/${series.id}`);
+                                            window.scrollTo(0, 0);
+                                        }}
+                                        style={{ flex: '0 0 auto', width: '140px', cursor: 'pointer' }}
+                                    >
+                                        <img
+                                            src={getResolvedPosterUrl(series.id, series.poster_path, globalPosters, 'w300')}
+                                            alt={series.name}
+                                            style={{ width: '100%', borderRadius: '6px', height: '210px', objectFit: 'cover', transition: 'transform 0.2s' }}
+                                            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
+                                            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+                                        />
+                                    </div>
+                                ))}
                             </div>
                         </div>
-                    )}
+                    );
+                })()
+            }
 
-                    {/* Hidden Render Target (Using opacity 0 to ensure images load, visibility:hidden can block loading) */}
-                    <div style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none', zIndex: -1000, width: '1080px', height: '1920px', overflow: 'hidden' }}>
-                        {stickerData && (
-                            <StorySticker
-                                ref={stickerRef}
-                                movie={stickerData.movie}
-                                rating={stickerData.rating}
-                                user={stickerData.user}
-                                isEpisodes={stickerData.isEpisodes}
-                            />
-                        )}
-                    </div>
-                </div>
-            )}
 
-            <ReviewModal
-                isOpen={isReviewOpen}
-                onClose={() => setIsReviewOpen(false)}
-                onSubmit={handleReviewSubmit}
-                initialRating={existingReviewData ? existingReviewData.rating : 5}
-                initialReview={existingReviewData ? existingReviewData.review : ''}
-                movieName={reviewingItem === 'series' ? title : (reviewingItem ? `${title}: Season ${selectedSeason} Episode ${reviewingItem.episode_number}` : title)}
-                modalTitle={reviewingItem !== 'series' && reviewingItem ? 'EPISODE REVIEW' : 'SERIES REVIEW'}
-            />
 
-            <ReviewsDrawer
-                isOpen={isReviewsOpen}
-                onClose={() => setIsReviewsOpen(false)}
-                reviews={[...reviewsData]
-                    .filter(r => {
-                        const isSeriesLevel = !r.isSeason && !r.isEpisode;
-                        const isCurrentSeason = r.isSeason && r.seasonNumber === selectedSeason;
-                        const isEpisodeInSeason = r.isEpisode && r.seasonNumber === selectedSeason;
-                        return isSeriesLevel || isCurrentSeason || isEpisodeInSeason;
-                    })
-                    .sort((a, b) => {
-                        const amIAuthor = a.userId === currentUser?.uid;
-                        const bmIAuthor = b.userId === currentUser?.uid;
-                        if (amIAuthor && !bmIAuthor) return -1;
-                        if (!amIAuthor && bmIAuthor) return 1;
-                        const aLikes = a.likes?.length || 0;
-                        const bLikes = b.likes?.length || 0;
-                        return bLikes - aLikes;
-                    })
-                    .map(r => ({
-                        id: r.id,
-                        source: 'app',
-                        author: r.userName || 'User',
-                        rating: r.rating,
-                        review: r.review,
-                        date: r.createdAt,
-                        likes: r.likes || [],
-                        isLiked: r.likes?.includes(currentUser?.uid),
-                        userId: r.userId,
-                        photoURL: r.photoURL || null,
-                        episodeNumber: r.episodeNumber,
-                        isEpisode: r.isEpisode,
-                        isSeason: r.isSeason,
-                        seasonNumber: r.seasonNumber,
-                        tmdbId: r.tmdbId,
-                        episodeId: r.episodeId,
-                        topicName: r.topicName || details.name
-                    }))}
-                onDelete={async (id) => {
-                    if (!currentUser) return;
-                    try {
-                        const reviewToDelete = reviewsData.find(r => r.id === id);
-                        if (!reviewToDelete) return;
-                        await deleteDoc(doc(db, 'reviews', id));
-                        if (!reviewToDelete.isEpisode) {
-                            const userRef = doc(db, 'users', currentUser.uid);
-                            const userSnap = await getDoc(userRef);
-                            if (userSnap.exists()) {
-                                const data = userSnap.data();
-                                const updatedStars = (data.starSeries || []).filter(s => String(s.id) !== String(details.id));
-                                await updateDoc(userRef, { starSeries: updatedStars });
-                            }
-                        }
-                        setReviewsData(prev => prev.filter(r => r.id !== id));
-                    } catch (error) {
-                        console.error("Error deleting review:", error);
-                    }
-                }}
-                onShare={handleShare}
-                onLike={handleReviewLike}
-                onEdit={handleEditReview}
-                theme={{}}
-            />
 
-            {/* Hidden Share Modal for Fallback (if kept) - but we use Sticker Modal now. Keeping for safety if other logic calls it, but likely redundant. */}
-            <ShareModal
-                isOpen={shareModal.isOpen}
-                onClose={() => setShareModal({ ...shareModal, isOpen: false })}
-                imageUrl={shareModal.imageUrl}
-            />
+
 
             {/* SEASON COMPLETION OVERLAY */}
-            <div style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                background: 'rgba(0,0,0,0.85)',
-                display: showSeasonCompletion ? 'flex' : 'none',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 9999,
-                opacity: showSeasonCompletion ? 1 : 0,
-                transition: 'opacity 0.4s ease',
-                backdropFilter: 'blur(5px)'
-            }}>
-                <div style={{
-                    background: '#0a0a0a',
-                    padding: '40px',
-                    borderRadius: '12px',
-                    textAlign: 'center',
-                    transform: showSeasonCompletion ? 'scale(1)' : 'scale(0.95)',
-                    transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                    boxShadow: '0 20px 50px rgba(0,0,0,0.8)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    maxWidth: '90vw',
-                    width: '320px'
-                }} onClick={e => e.stopPropagation()}>
-                    <h2 style={{
-                        color: '#fff',
-                        fontFamily: 'Anton, sans-serif',
-                        fontSize: '2rem',
-                        marginBottom: '20px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '1px'
-                    }}>
-                        Season {completedSeasonInfo?.seasonNumber} Completed
-                    </h2>
-
-                    <div style={{
-                        width: '140px',
-                        height: '140px',
-                        margin: '0 auto 20px',
-                        position: 'relative',
-                        borderRadius: '4px',
-                        overflow: 'hidden',
-                        boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
-                    }}>
-                        <img
-                            src={`https://image.tmdb.org/t/p/w200${completedSeasonInfo?.poster}`}
-                            alt="Season Poster"
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                        <div style={{
-                            position: 'absolute',
-                            bottom: 0,
-                            left: 0,
-                            width: '100%',
-                            height: '4px',
-                            background: '#FFD600'
-                        }} />
-                    </div>
-
-                    <p style={{
-                        color: 'rgba(255,255,255,0.6)',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        margin: 0
-                    }}>
-                        Great job catching up!
-                    </p>
-
-                    <button
-                        onClick={handleSeasonCompletionClose}
-                        style={{
-                            background: '#FFD600',
-                            color: '#000',
-                            fontFamily: 'Anton, sans-serif',
-                            textTransform: 'uppercase',
-                            fontSize: '1rem',
-                            letterSpacing: '1px',
-                            border: 'none',
-                            padding: '12px 40px',
-                            borderRadius: '4px',
-                            marginTop: '25px',
-                            cursor: 'pointer',
-                            fontWeight: 'bold',
-                            boxShadow: '0 4px 15px rgba(255, 214, 0, 0.3)',
-                            transition: 'transform 0.2s ease, box-shadow 0.2s ease'
-                        }}
-                        onMouseEnter={e => {
-                            e.target.style.transform = 'scale(1.05)';
-                            e.target.style.boxShadow = '0 6px 20px rgba(255, 214, 0, 0.5)';
-                        }}
-                        onMouseLeave={e => {
-                            e.target.style.transform = 'scale(1)';
-                            e.target.style.boxShadow = '0 4px 15px rgba(255, 214, 0, 0.3)';
-                        }}
+            {
+                showSeasonCompletion && (
+                    <div
+                        className="modal-overlay popup-overlay"
+                        style={{ pointerEvents: 'auto' }} // Ensure overlay handles clicks if needed (but we block them below)
                     >
-                        OK
-                    </button>
-                </div>
-            </div>
+                        <div
+                            className="modal-content"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: '#000000',
+                                border: '1px solid #333',
+                                borderRadius: '16px',
+                                padding: '40px 30px',
+                                width: '85%',
+                                maxWidth: '320px',
+                                textAlign: 'center',
+                                boxShadow: '0 20px 60px rgba(0,0,0,0.9)',
+                            }}
+                        >
+                            <MdCelebration style={{ fontSize: '3rem', marginBottom: '15px', color: '#FFD600' }} />
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#fff', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                                Season Completed
+                            </h2>
+                            <p style={{ fontSize: '1rem', color: '#ccc', lineHeight: '1.5', marginBottom: '25px' }}>
+                                You unlocked poster customization
+                            </p>
+                            <button
+                                onClick={handleSeasonCompletionClose}
+                                style={{
+                                    background: '#fff',
+                                    color: '#000',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    padding: '12px 0',
+                                    fontSize: '1rem',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    width: '100%',
+                                    textTransform: 'uppercase',
+                                    transition: 'transform 0.1s'
+                                }}
+                                onMouseDown={e => e.currentTarget.style.transform = 'scale(0.96)'}
+                                onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                            >
+                                OK
+                            </button>
+                        </div>
+                    </div>
+                )
+            }
 
-        </div>
+            {/* Daily Limit Popup */}
+            {
+                limitPopupVisible && (
+                    <div
+                        className="modal-overlay"
+                        onClick={() => setLimitPopupVisible(false)}
+                    >
+                        <div
+                            className="modal-content"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: '#000000',
+                                border: '1px solid #333',
+                                borderRadius: '16px',
+                                padding: '30px',
+                                maxWidth: '90%',
+                                width: '320px',
+                                textAlign: 'center',
+                                boxShadow: '0 20px 50px rgba(0,0,0,0.5)'
+                            }}
+                        >
+                            <MdMovie style={{ fontSize: '3rem', marginBottom: '15px', color: '#FFD600' }} />
+                            <div style={{ fontSize: '1.2rem', lineHeight: '1.4', color: '#fff', marginBottom: '20px', fontWeight: 'bold' }}>
+                                Take it slow
+                            </div>
+                            <p style={{ color: '#aaa', fontSize: '0.95rem', marginBottom: '25px' }}>
+                                You can change one poster per day.
+                            </p>
+                            <button
+                                onClick={() => setLimitPopupVisible(false)}
+                                style={{
+                                    background: '#FFD600',
+                                    color: '#000',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    padding: '12px 30px',
+                                    fontSize: '16px',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    width: '100%'
+                                }}
+                            >
+                                OK
+                            </button>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Poster Unlock Popup */}
+            <PosterUnlockPopup
+                isOpen={showPosterUnlockPopup}
+                onClose={handlePopupClose}
+                seriesId={posterUnlockData?.seriesId}
+                seasonNumber={posterUnlockData?.seasonNumber}
+                seriesName={posterUnlockData?.seriesName}
+            />
+
+        </div >
     );
 };
 
 export default MovieDetails;
+
 

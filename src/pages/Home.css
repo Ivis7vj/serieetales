@@ -1,54 +1,72 @@
 :root {
   --bg-primary: #000000;
-  /* AMOLED Black */
   --bg-secondary: #050505;
-  /* Slightly lighter for sections */
   --accent-color: #FFD600;
-  /* Prime Yellow */
   --text-primary: #FFFFFF;
   --text-secondary: rgba(255, 255, 255, 0.75);
   --text-muted: rgba(255, 255, 255, 0.5);
   --border-color: #1a1a1a;
   --card-shadow: rgba(0, 0, 0, 0.8);
   --overlay-gradient: linear-gradient(to top, rgba(0, 0, 0, 0.95) 20%, rgba(0, 0, 0, 0.6) 60%, transparent 100%);
+
+  /* Safe Area Variables */
+  --safe-top: env(safe-area-inset-top, 20px);
+  /* Increased default fallback */
+  --safe-bottom: env(safe-area-inset-bottom, 20px);
+}
+
+/* Global Loader Centering */
+.loader-container-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  width: 100%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  background: #000;
+  z-index: 9999;
 }
 
 .home-container {
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   background-color: var(--bg-primary);
   color: var(--text-primary);
-  /* Clean Body Text */
+  /* Fixed Layout Structure */
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+  /* Lock the main window */
+  position: relative;
   transition: background-color 0.3s;
 
   /* Safe Area Padding */
-  padding-top: var(--safe-top);
+  /* Safe Area Padding - ONLY Bottom here */
   padding-bottom: var(--safe-bottom);
-  padding-left: var(--safe-left);
-  padding-right: var(--safe-right);
 }
 
 /* Header Styles */
 .header {
   width: 100%;
-  height: 70px;
+  height: clamp(70px, 10vh, 80px);
+  /* Responsive height */
   background: var(--bg-primary);
-  /* Pure Dark */
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Center content */
   padding: 0 20px;
   position: fixed;
   top: 0;
   z-index: 1000;
-  border-bottom: 1px solid var(--border-color);
-  transition: background-color 0.3s, border-color 0.3s;
+  /* border-bottom: 1px solid var(--border-color); REMOVED */
+  transition: all 0.3s ease;
+  padding-top: var(--safe-top);
+  /* Global safe top */
+  justify-content: space-between;
+  /* Ensure spread */
 }
 
 .header-left {
@@ -60,19 +78,19 @@
 .logo {
   font-size: 20px;
   font-weight: 400;
-  /* Anton is naturally bold */
   color: var(--accent-color);
   text-decoration: none;
   display: flex;
   align-items: center;
   gap: 10px;
   font-family: 'Anton', sans-serif;
-  /* UPDATE LINE */
   letter-spacing: 1px;
-  position: absolute;
-  /* Force Center */
-  left: 50%;
-  transform: translateX(-50%);
+  /* position: absolute; REMOVED */
+  /* left: 50%; REMOVED */
+  /* top: 50%; REMOVED */
+  /* transform: translate(-50%, -50%); REMOVED */
+  margin: 0 auto;
+  /* Center in flex container if siblings allow, or just be part of flow */
 }
 
 .header-nav {
@@ -120,27 +138,66 @@
   transform: scale(1.1);
 }
 
-/* Main Content */
+/* Main Content Transitions */
 .main-content {
   flex: 1;
   padding-top: 0;
-  /* Handled by wrapper margin */
-  /* Offset for fixed header */
-  /* padding-bottom: 40px; removed to handle in scrollable-content */
   display: flex;
   flex-direction: column;
+}
+
+/* Global Page Fade/Slide Animation */
+.page-transition-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-transition-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.page-transition-exit {
+  opacity: 1;
+}
+
+.page-transition-exit-active {
+  opacity: 0;
+  transition: opacity 300ms;
+}
+
+/* Fallback simple transition for all pages without react-transition-group */
+.main-content {
+  animation: pageFadeIn 0.5s ease-out forwards;
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .content-wrapper {
   display: flex;
   flex: 1;
   width: 100%;
-  height: calc(100vh - 70px);
+  height: 100%;
   /* Fill remaining height */
-  margin-top: 70px;
+  margin-top: 0;
+  padding-top: 70px;
+  /* Internal padding for header space */
   /* Offset for fixed header */
   overflow: hidden;
   /* container doesn't scroll, children do */
+  position: relative;
+  z-index: 1;
 }
 
 .left-sidebar {
@@ -240,7 +297,13 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: 40px;
+  padding-bottom: 80px;
+  /* Space for bottom nav on mobile */
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior-y: contain;
+  /* Prevent parent bounce */
+  height: 100%;
 }
 
 /* Hero Section */
@@ -365,32 +428,29 @@
   letter-spacing: 2px;
 }
 
+/* Series Card Refined */
 .series-row {
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  padding: 10px 60px 20px 60px;
-  /* Reduced from 20/40 */
-  /* Increased top/bottom padding for hover scale */
+  overflow-y: hidden;
+  padding: 10px 20px 20px 20px;
+  /* Reduced side padding from 60px to 20px for mobile */
   scroll-behavior: smooth;
-  touch-action: pan-x;
-  /* Strict Horizontal Scroll / Lock Vertical */
+  touch-action: pan-x pan-y !important;
+  /* Forces BOTH axis pans to work natively */
+  -webkit-overflow-scrolling: touch;
 }
 
-/* Hide scrollbar for Chrome, Safari and Opera */
-.series-row::-webkit-scrollbar {
-  display: none;
+.series-card,
+.series-poster-wrapper,
+.series-poster {
+  touch-action: pan-x pan-y !important;
+  /* Allow ALL scrolling to bubbles up */
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
-/* Hide scrollbar for IE, Edge and Firefox */
-.series-row {
-  -ms-overflow-style: none;
-  /* IE and Edge */
-  scrollbar-width: none;
-  /* Firefox */
-}
-
-/* Series Card Refined */
 .series-card-container {
   /* Default width managed by media query mostly, but base needs setting */
   flex: 0 0 auto;
@@ -485,43 +545,69 @@
 
 @media (max-width: 768px) {
 
-  /* Header Adjustments */
+  /* Header Adjustments - COMPRESSED */
   .header {
     padding: 0 15px;
-    height: calc(60px + env(safe-area-inset-top));
-    padding-top: env(safe-area-inset-top);
+    height: calc(56px + var(--safe-top));
+    /* Standard Mobile Height 56px */
+    padding-top: var(--safe-top);
+    align-items: center;
+    /* Center items vertically */
+    justify-content: space-between;
+    /* Ensure spread */
+  }
+
+  .logo {
+    /* position: absolute; REMOVED */
+    /* top: calc(var(--safe-top) + 30px) !important; REMOVED */
+    /* transform: translate(-50%, -50%) !important; REMOVED */
+    margin: 0;
+    /* Let flex handle it */
+    font-size: 1.5rem;
+    /* Slightly smaller for tight fit */
+    line-height: 1;
+  }
+
+  /* Reset transform shift */
+  .header-left,
+  .header-right {
+    transform: none !important;
+    display: flex;
+    align-items: center;
+    height: 100%;
   }
 
   .header-icon-btn {
-    font-size: 24px;
-    /* Larger touch targets */
+    font-size: 22px;
+    /* Slightly smaller */
   }
 
   /* Mobile Content Wrapper */
   .content-wrapper {
-    margin-top: calc(60px + env(safe-area-inset-top));
     /* Match header height */
-    height: calc(100vh - (60px + env(safe-area-inset-top)));
-    /* Adjust height */
+    height: 100dvh;
+    padding-top: calc(56px + var(--safe-top));
+    /* Tighter 56px standard */
+    margin-top: 0;
     flex-direction: column;
-    /* Stack if needed, but we keep generic structure */
   }
 
   /* Transform Sidebar to Bottom Nav */
   .left-sidebar {
-    width: 100%;
-    height: calc(60px + env(safe-area-inset-bottom));
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    flex-direction: row;
-    border-right: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    width: 100% !important;
+    height: calc(60px + env(safe-area-inset-bottom)) !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    flex-direction: row !important;
+    border-right: none !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
     background: rgba(0, 0, 0, 0.95);
     backdrop-filter: blur(10px);
-    z-index: 2000;
-    padding-bottom: env(safe-area-inset-bottom);
-    justify-content: space-around;
+    z-index: 5000 !important;
+    /* Extreme z-index to stay above animations */
+    padding-bottom: env(safe-area-inset-bottom) !important;
+    justify-content: space-around !important;
   }
 
   .left-sidebar:hover {
@@ -600,25 +686,30 @@
 
   /* Large Posters Logic */
   .series-row {
-    padding: 5px 20px 15px 20px;
-    /* Tight mobile padding */
-    gap: 10px;
+    padding: 5px 0 15px 0;
+    /* Edge-to-edge horizontal scroll */
+    gap: 12px;
+    scroll-padding: 0 20px;
   }
 
-  .series-card-container {
-    width: 150px;
-    /* Vertical Mobile */
+  .series-card-container:first-of-type {
+    margin-left: 20px;
+  }
+
+  .series-card-container:last-of-type {
+    margin-right: 20px;
   }
 
   .section {
-    padding-left: 20px;
+    padding-left: 0;
     padding-top: 10px;
     padding-bottom: 0;
   }
 
   .section-title {
+    padding-left: 20px;
+    /* Keeps titles aligned with first poster */
     font-size: 0.95rem;
-    /* Smaller mobile title */
     letter-spacing: 1.5px;
     margin-bottom: 5px;
   }
@@ -662,29 +753,28 @@
   }
 }
 
-/* Responsive Shrinking */
-@media screen and (max-width: 1024px) {
+/* Responsive Shrinking - Placeholder for future overrides */
 
-  .movie-details-container,
-  .profile-container {
-    zoom: 0.85;
-  }
-}
-
-@media screen and (max-width: 768px) {
-
-  .movie-details-container,
-  .profile-container {
-    zoom: 0.7;
-  }
-}
 
 /* Responsive Header Logo */
 .app-logo-text {
-  font-size: 2.5rem;
-  font-family: "Arial Black", "Impact", sans-serif;
+  font-family: 'Anton', sans-serif !important;
   text-transform: uppercase;
-  transition: font-size 0.3s ease;
+  transition: all 0.3s ease;
+  letter-spacing: 1px;
+  font-weight: 400;
+  transform: scaleY(1.1);
+  display: inline-block;
+}
+
+.logo-s-part {
+  color: #FFD400;
+  text-shadow: 0 0 15px rgba(255, 212, 0, 0.4);
+}
+
+.logo-eriee-part {
+  color: #FFFFFF;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
 }
 
 @media (max-width: 768px) {
@@ -734,13 +824,15 @@
 
   /* Stack horizontal on mobile, shrink size to fit */
   .action-btn-responsive {
-    font-size: 1rem !important;
-    /* Increased from 0.7rem */
-    padding: 12px 20px !important;
-    /* Increased padding */
-    gap: 8px !important;
+    font-size: 0.75rem !important;
+    /* Reduced from 1rem */
+    padding: 8px 10px !important;
+    /* Reduced from 12px 20px */
+    gap: 4px !important;
     min-width: auto !important;
     font-weight: 700 !important;
+    height: 36px !important;
+    /* Force small height */
   }
 
   .episode-review-btn-mobile {
@@ -809,6 +901,20 @@
   background: #000;
   padding-bottom: 50px;
   overflow-x: hidden;
+}
+
+/* Force Remove Mobile Footer Border */
+@media (max-width: 768px) {
+
+  .sidebar-nav,
+  .left-sidebar,
+  .mobile-nav,
+  nav,
+  footer,
+  .bottom-nav {
+    border-top: none !important;
+    box-shadow: none !important;
+  }
 }
 
 .hero-vertical-section {
@@ -888,5 +994,57 @@
   .hero-title-gradient {
     font-size: 3rem;
     /* Medium Large Mobile */
+  }
+}
+
+/* ADDED for "Season Completed" Edit Poster Hint */
+.edit-poster-hint {
+  position: absolute;
+  top: 15px;
+  left: 100%;
+  margin-left: 15px;
+  background: #FFD600;
+  color: #000;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: fadeIn 0.3s ease-out;
+  z-index: 20;
+}
+
+/* Arrow for Desktop (Left) */
+.edit-poster-hint::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-right: 6px solid #FFD600;
+}
+
+/* Mobile Adjustment: Below the button */
+@media (max-width: 768px) {
+  .edit-poster-hint {
+    left: 50%;
+    top: 130%;
+    /* Below button */
+    margin-left: 0;
+    transform: translateX(-50%);
+  }
+
+  /* Arrow for Mobile (Top) */
+  .edit-poster-hint::before {
+    left: 50%;
+    top: -6px;
+    transform: translateX(-50%);
+    border-right: 6px solid transparent;
+    border-left: 6px solid transparent;
+    border-bottom: 6px solid #FFD600;
+    border-top: none;
   }
 }

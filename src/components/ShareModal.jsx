@@ -1,20 +1,13 @@
-import React from 'react';
 import { MdClose, MdFileDownload, MdContentCopy, MdOpenInNew } from 'react-icons/md';
 import { useNotification } from '../context/NotificationContext';
+import { useScrollLock } from '../hooks/useScrollLock';
 
 const ShareModal = ({ isOpen, onClose, imageUrl }) => {
-    if (!isOpen) return null;
-
-    const handleSave = () => {
-        const link = document.createElement('a');
-        link.href = imageUrl;
-        link.download = `Letterboard_Story_${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-
     const { alert } = useNotification();
+
+    useScrollLock(isOpen);
+
+    if (!isOpen) return null;
 
     const handleCopy = async () => {
         try {
@@ -37,20 +30,8 @@ const ShareModal = ({ isOpen, onClose, imageUrl }) => {
     };
 
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-            backdropFilter: 'blur(5px)'
-        }}>
-            <div style={{
+        <div className="modal-overlay">
+            <div className="modal-content" style={{
                 background: '#1a1a1a',
                 borderRadius: '16px',
                 padding: '24px',

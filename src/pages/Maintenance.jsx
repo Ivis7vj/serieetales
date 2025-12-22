@@ -17,7 +17,7 @@ const Maintenance = () => {
                     We'll be back shortly!
                 </p>
                 <div className='maintenance-footer'>
-                    &copy; {new Date().getFullYear()} Letterboard. All rights reserved.
+                    &copy; {new Date().getFullYear()} Seriee No rights reserved.
                 </div>
             </div>
         </div>

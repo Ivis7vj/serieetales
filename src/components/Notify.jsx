@@ -3,6 +3,7 @@ import { IoNotificationsOutline } from 'react-icons/io5';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import { doc, onSnapshot, updateDoc, arrayRemove } from 'firebase/firestore';
+import MobileIndicator from './MobileIndicator';
 import '../pages/Home.css'; // Leveraging existing styles or add new ones
 
 const Notify = () => {
@@ -106,20 +107,33 @@ const Notify = () => {
                         {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
                 )}
+                <MobileIndicator
+                    id="notif-bell-tip"
+                    message="Series updates here 🔔"
+                    position="bottom"
+                    style={{
+                        right: 0,
+                        left: 'auto',
+                        transform: 'none',
+                        whiteSpace: 'nowrap'
+                    }}
+                />
             </div>
 
             {showDropdown && (
                 <div className="notify-dropdown" style={{
-                    position: 'absolute',
-                    top: '140%',
-                    left: '-20px', // Align closer to left edge to prevent cutoff
-                    width: '280px', // Slightly narrower
-                    background: '#000', // PURE BLACK
+                    position: 'fixed', // Fixed for full width capability
+                    top: '70px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '95vw', // Full Mobile Width
+                    maxWidth: '400px',
+                    background: 'rgba(0,0,0,0.95)', // Semi-transparent Black
                     border: '1px solid #333',
-                    borderRadius: '0px', // Square design
+                    borderRadius: '8px',
                     boxShadow: '0 4px 20px rgba(0,0,0,0.8)',
                     zIndex: 2000,
-                    maxHeight: '400px',
+                    maxHeight: '60vh',
                     overflowY: 'auto',
                     padding: '0'
                 }}>

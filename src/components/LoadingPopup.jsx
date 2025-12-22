@@ -1,21 +1,11 @@
 import React from 'react';
+import { useScrollLock } from '../hooks/useScrollLock';
 
-const LoadingPopup = () => {
+const LoadingPopup = ({ message = "Loading..." }) => {
+    useScrollLock(true);
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            background: 'rgba(0, 0, 0, 0.95)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-            animation: 'fadeIn 0.3s ease-in'
-        }}>
-            <div style={{
+        <div className="modal-overlay">
+            <div className="modal-content" style={{
                 background: '#000',
                 padding: '60px 80px',
                 borderRadius: '16px',
@@ -36,15 +26,17 @@ const LoadingPopup = () => {
                 }} />
 
                 {/* Text */}
-                <p style={{
-                    color: '#fff',
-                    fontSize: '18px',
-                    fontWeight: '500',
-                    margin: 0,
-                    fontFamily: "'Inter', sans-serif"
-                }}>
-                    Preparing sticker...
-                </p>
+                {message && (
+                    <p style={{
+                        color: '#fff',
+                        fontSize: '18px',
+                        fontWeight: '500',
+                        margin: 0,
+                        fontFamily: "'Inter', sans-serif"
+                    }}>
+                        {message}
+                    </p>
+                )}
             </div>
 
             <style>{`

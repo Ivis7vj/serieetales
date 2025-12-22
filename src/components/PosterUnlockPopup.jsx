@@ -1,9 +1,11 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MdClose, MdEdit } from 'react-icons/md';
+import { useScrollLock } from '../hooks/useScrollLock';
 
-const PosterUnlockPopup = ({ isOpen, onClose, seriesId, seasonNumber, seriesName }) => {
+const PosterUnlockPopup = ({ isOpen, onClose, seriesId, seasonNumber }) => {
     const navigate = useNavigate();
+
+    useScrollLock(isOpen);
 
     if (!isOpen) return null;
 
@@ -13,20 +15,8 @@ const PosterUnlockPopup = ({ isOpen, onClose, seriesId, seasonNumber, seriesName
     };
 
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100vw',
-            height: '100vh',
-            background: 'rgba(0, 0, 0, 0.9)',
-            zIndex: 6000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            animation: 'fadeIn 300ms ease-out'
-        }}>
-            <div style={{
+        <div className="modal-overlay">
+            <div className="modal-content" style={{
                 background: '#111',
                 borderRadius: '16px',
                 padding: '40px',

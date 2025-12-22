@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { MdStar, MdPlayArrow, MdError, MdAdd } from 'react-icons/md';
 import { Link } from 'react-router-dom';
 import '../pages/Home.css';
@@ -46,31 +46,9 @@ const HoverCard = ({ series, children }) => {
                     }}
                 >
                     <div className="media-container" style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: '#000' }}>
-                        {loadingVideo ? (
-                            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>Loading Trailer...</div>
-                        ) : videoKey ? (
-                            <iframe
-                                src={`https://www.youtube.com/embed/${videoKey}?autoplay=1&controls=1&modestbranding=1&loop=1&playlist=${videoKey}&rel=0`}
-                                title="Trailer"
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    height: '100%',
-                                    border: 'none',
-                                    objectFit: 'cover'
-                                }}
-                                frameBorder="0"
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                allowFullScreen
-                            ></iframe>
-                        ) : (
-                            <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <img src={`https://image.tmdb.org/t/p/w500${series.backdrop_path || series.poster_path}`} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.6 }} />
-                                <MdError style={{ position: 'absolute', color: '#666' }} />
-                            </div>
-                        )}
+                        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img src={`https://image.tmdb.org/t/p/w500${series.backdrop_path || series.poster_path}`} alt={series.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.6 }} />
+                        </div>
                     </div>
 
                     <div className="popup-info" style={{ padding: '15px', background: '#181818' }}>

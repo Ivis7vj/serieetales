@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import './Home.css';
+import { triggerErrorAutomation } from '../utils/errorAutomation';
 
 const EditProfile = () => {
     const navigate = useNavigate();
@@ -44,8 +45,7 @@ const EditProfile = () => {
             });
             navigate('/profile');
         } catch (error) {
-            console.error("Error updating profile:", error);
-            alert("Failed to update profile.");
+            triggerErrorAutomation(error);
         }
     };
 

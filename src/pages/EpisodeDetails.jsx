@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MdArrowBack, MdStar, MdCalendarToday, MdAccessTime, MdPerson, MdRateReview } from 'react-icons/md';
-import ReviewsDrawer from '../components/ReviewsDrawer';
 import { useNotification } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
+import { useLoading } from '../context/LoadingContext';
 import { db } from '../firebase-config';
-import { collection, query, where, getDocs, doc, updateDoc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import * as reviewService from '../utils/reviewService';
+import { triggerErrorAutomation } from '../utils/errorAutomation';
 
 
 const TMDB_API_KEY = "3fd2be6f0c70a2a598f084ddfb75487c";
@@ -14,17 +16,15 @@ const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const EpisodeDetails = () => {
     const { id, seasonNumber, episodeNumber } = useParams(); // id is Series ID
     const navigate = useNavigate();
-    const { confirm } = useNotification();
     const { currentUser } = useAuth();
 
     const [episode, setEpisode] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [isReviewsOpen, setIsReviewsOpen] = useState(false);
+    const { stopLoading } = useLoading();
 
     // Reviews State
-    const [tmdbReviews, setTmdbReviews] = useState([]);
+    // Reviews State
     const [firestoreReviews, setFirestoreReviews] = useState([]); // Reviews from DB
-    const [ratings, setRatings] = useState([]);
 
     useEffect(() => {
         const fetchEpisodeDetails = async () => {
@@ -35,82 +35,33 @@ const EpisodeDetails = () => {
                 const data = await res.json();
                 setEpisode(data);
 
-                // Fetch Series Details (for Name) needed for OMDb Fallback
-                const seriesRes = await fetch(`${TMDB_BASE_URL}/tv/${id}?api_key=${TMDB_API_KEY}`);
-                const seriesData = await seriesRes.json();
-                const seriesName = seriesData.name;
+                // Fetch Series Details (for Name) - check if used elsewhere. It matches unused logic removal above.
 
-                // 2. Try Fetching OMDb Rating
-                let omdbData = null;
-
-                // Strategy A: By IMDb ID (Preferred)
-                if (data.external_ids?.imdb_id) {
-                    try {
-                        const res = await fetch(`https://www.omdbapi.com/?i=${data.external_ids.imdb_id}&apikey=15529774`);
-                        const json = await res.json();
-                        if (json.Response === "True") omdbData = json;
-                    } catch (e) {
-                        console.warn("OMDb ID fetch failed", e);
-                    }
-                }
-
-                // Strategy B: By Title/Season/Episode (Fallback) if A failed or no rating
-                if ((!omdbData || !omdbData.imdbRating || omdbData.imdbRating === 'N/A') && seriesName) {
-                    try {
-                        const res = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(seriesName)}&Season=${seasonNumber}&Episode=${episodeNumber}&apikey=15529774`);
-                        const json = await res.json();
-                        if (json.Response === "True") omdbData = json;
-                    } catch (e) {
-                        console.warn("OMDb Search fetch failed", e);
-                    }
-                }
-
-                // 3. Process Ratings
-                if (omdbData) {
-                    setRatings(omdbData.Ratings || []);
-                    if (omdbData.imdbRating && omdbData.imdbRating !== 'N/A') {
-                        setRatings(prev => {
-                            const exists = prev.some(r => r.Source === "Internet Movie Database");
-                            if (!exists) return [...prev, { Source: "Internet Movie Database", Value: `${omdbData.imdbRating}/10` }];
-                            return prev;
-                        });
-                    }
-                }
-
-                // Fetch Episode Reviews (if available separately, otherwise can fallback to show reviews)
-                const reviewsRes = await fetch(`${TMDB_BASE_URL}/tv/${id}/reviews?api_key=${TMDB_API_KEY}`);
-                const reviewsData = await reviewsRes.json();
-                setTmdbReviews(reviewsData.results || []);
-
-                // Fetch Firestore Reviews (Specific to Episode)
+                // Fetch Reviews via reviewService (Dual-Read: Supabase → Firebase)
                 if (data.id) {
-                    const reviewsQuery = query(
-                        collection(db, 'reviews'),
-                        where('episodeId', '==', data.id),
-                        where('isEpisode', '==', true)
+                    const dbReviews = await reviewService.getEpisodeReviews(
+                        parseInt(id),
+                        parseInt(seasonNumber),
+                        parseInt(episodeNumber)
                     );
-                    const reviewsSnap = await getDocs(reviewsQuery);
-                    const dbReviews = reviewsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setFirestoreReviews(dbReviews);
                 }
 
 
 
             } catch (error) {
-                console.error("Failed to fetch episode details", error);
+                triggerErrorAutomation(error);
             } finally {
                 setLoading(false);
+                stopLoading();
             }
         };
 
         fetchEpisodeDetails();
     }, [id, seasonNumber, episodeNumber]);
 
-    if (loading) {
-        return <div style={{ height: '100vh', background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
-    }
-
-    if (!episode) return null;
+    if (loading && !episode) return null; // Wait for data
+    if (!episode) return <div style={{ color: '#FFD600', textAlign: 'center', marginTop: '100px' }}>Episode not found</div>;
 
     const backdropUrl = episode.still_path
         ? `https://image.tmdb.org/t/p/original${episode.still_path}`
@@ -167,8 +118,13 @@ const EpisodeDetails = () => {
                     {/* Episode Ratings */}
                     <div style={{ display: 'flex', gap: '15px', marginTop: '15px', flexWrap: 'wrap' }}>
                         {(() => {
-                            // Filter for THIS episode from Firestore Data
-                            const epReviews = firestoreReviews.filter(r => r.episodeId === parseInt(episode.id) && r.isEpisode);
+                            // Filter for THIS episode (Multi-Sourced: Supabase/Firestore)
+                            const epReviews = firestoreReviews.filter(r =>
+                                r.tmdbId === parseInt(id) &&
+                                r.seasonNumber === parseInt(seasonNumber) &&
+                                r.episodeNumber === parseInt(episodeNumber) &&
+                                r.isEpisode
+                            );
                             const count = epReviews.length;
                             const avg = count > 0 ? (epReviews.reduce((acc, r) => acc + parseFloat(r.rating), 0) / count).toFixed(1) : null;
 
@@ -198,7 +154,7 @@ const EpisodeDetails = () => {
                 <div style={{ marginBottom: '30px' }}>
                     <button
                         className="action-btn"
-                        onClick={() => setIsReviewsOpen(true)}
+                        onClick={() => navigate(`/tv/${id}/season/${seasonNumber}/episode/${episodeNumber}/reviews`)}
                         style={{
                             background: 'transparent',
                             color: 'white',
@@ -267,51 +223,7 @@ const EpisodeDetails = () => {
                 )}
             </div>
 
-            <ReviewsDrawer
-                isOpen={isReviewsOpen}
-                onClose={() => setIsReviewsOpen(false)}
-                reviews={firestoreReviews.filter(r => r.episodeId === parseInt(id) || (r.episodeId === parseInt(episode.id) && r.isEpisode)).map(r => ({
-                    id: r.id,
-                    source: 'app',
-                    author: r.userName || 'User',
-                    rating: r.rating,
-                    review: r.review,
-                    date: r.createdAt,
-                    likes: r.likes || [],
-                    isLiked: r.likes?.includes(currentUser?.uid),
-                    userId: r.userId
-                }))}
-                onDelete={() => { }}
-                onShare={() => { }}
-                onLike={async (reviewId) => {
-                    if (!currentUser) return;
-                    const reviewRef = doc(db, 'reviews', reviewId);
-
-                    // Optimistic Update
-                    setFirestoreReviews(prev => prev.map(r => {
-                        if (r.id === reviewId) {
-                            const hasLiked = r.likes?.includes(currentUser.uid);
-                            return {
-                                ...r,
-                                likes: hasLiked ? r.likes.filter(id => id !== currentUser.uid) : [...(r.likes || []), currentUser.uid]
-                            };
-                        }
-                        return r;
-                    }));
-
-                    const review = firestoreReviews.find(r => r.id === reviewId);
-                    if (review) {
-                        const hasLiked = review.likes?.includes(currentUser.uid);
-                        if (hasLiked) {
-                            await updateDoc(reviewRef, { likes: arrayRemove(currentUser.uid) });
-                        } else {
-                            await updateDoc(reviewRef, { likes: arrayUnion(currentUser.uid) });
-                        }
-                    }
-                }}
-                currentUser={currentUser}
-                theme={{}}
-            />
+            {/* ReviewsDrawer REMOVED - Using dedicated reviews page */}
         </div>
     );
 };

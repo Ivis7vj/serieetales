@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useCallback, useRef } from 'react'
 
 const NotificationContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useNotification = () => useContext(NotificationContext);
 
 export const NotificationProvider = ({ children }) => {

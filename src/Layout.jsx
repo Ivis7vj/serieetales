@@ -1,21 +1,31 @@
 import { Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FaArrowLeft } from 'react-icons/fa';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+import PremiumLoader from './components/PremiumLoader';
+import { useAuth } from './context/AuthContext';
+import { useLoading } from './context/LoadingContext';
+import { useScrollLock } from './hooks/useScrollLock';
 import './pages/Home.css'; // Reusing Home layout styles for the main container
 
 const Layout = () => {
     const [activeFooter, setActiveFooter] = useState('home');
-    const isAuthenticated = localStorage.getItem('currentUser');
     const location = useLocation();
     const navigate = useNavigate();
+    const { logout } = useAuth();
+    const { isLoading, setIsLoading, loadingMessage } = useLoading();
 
-    // Auth check removed for guest access
+    // Lock scroll during global loading
+    useScrollLock(isLoading);
 
-    const handleLogout = () => {
-        localStorage.removeItem('currentUser');
-        window.location.href = '/login'; // simple reload to clear state
+    const handleLogout = async () => {
+        try {
+            await logout();
+            navigate('/login');
+        } catch (err) {
+            console.error("Logout failed", err);
+        }
     };
 
     // Show Back Button logic
@@ -23,6 +33,7 @@ const Layout = () => {
 
     return (
         <div className="home-container" style={{ position: 'relative' }}>
+            {isLoading && <PremiumLoader message={loadingMessage} />}
             {showBackButton && (
                 <button
                     onClick={() => navigate(-1)}

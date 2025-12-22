@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase-config';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
-const Header = ({ onLogout }) => {
+const Header = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -84,14 +84,16 @@ const Header = ({ onLogout }) => {
 
     useEffect(() => {
         const fetchSuggestions = async () => {
-            if (searchTerm.length > 2) {
+            if (searchTerm.trim().length > 1) { // Trigger earlier
                 try {
                     const response = await fetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(searchTerm)}`);
                     const data = await response.json();
-                    setSuggestions(data.results.slice(0, 5));
-                    setShowSuggestions(true);
+                    if (data.results) {
+                        setSuggestions(data.results.slice(0, 5));
+                        setShowSuggestions(true);
+                    }
                 } catch (e) {
-                    console.error(e);
+                    console.error("Suggestion fetch error:", e);
                 }
             } else {
                 setSuggestions([]);
@@ -99,9 +101,9 @@ const Header = ({ onLogout }) => {
             }
         };
 
-        const timeoutId = setTimeout(fetchSuggestions, 300);
+        const timeoutId = setTimeout(fetchSuggestions, 200); // Faster debounce
         return () => clearTimeout(timeoutId);
-    }, [searchTerm]);
+    }, [searchTerm, TMDB_API_KEY]);
 
     const handleSearch = (e) => {
         e.preventDefault();
@@ -110,6 +112,9 @@ const Header = ({ onLogout }) => {
                 state: selectionMode.active ? { selectForFavorite: true, slotIndex: selectionMode.slotIndex } : {}
             });
             setShowSuggestions(false);
+            addToRecent({ name: searchTerm, id: Date.now() }); // Use name as object
+            setIsSearchActive(false); // Close Black Overlay & Search Bar
+            setSearchTerm(''); // Clear Input
         }
     };
 
@@ -117,19 +122,41 @@ const Header = ({ onLogout }) => {
 
     // Load Recents
     useEffect(() => {
-        const saved = JSON.parse(localStorage.getItem('recentSearches') || '[]');
-        // Migrate legacy strings to objects if needed (optional, or just filter)
-        // For now assume mixed or reset. Let's filter for objects or upgrade strings
-        const normalized = saved.map(item => typeof item === 'string' ? { name: item, id: 'legacy-' + item } : item);
+        let saved = [];
+        try {
+            const raw = localStorage.getItem('recentSearches');
+            if (raw && raw !== "[object Object]") {
+                try {
+                    saved = JSON.parse(raw);
+                    if (!Array.isArray(saved)) saved = [];
+                } catch (parseErr) {
+                    console.error("JSON Parse Error in Header.jsx:", parseErr);
+                    saved = [];
+                }
+            }
+        } catch (e) {
+            console.error("Error accessing localStorage in Header.jsx", e);
+            saved = [];
+        }
+        const normalized = saved.map(item => (item && typeof item === 'object') ? item : { name: String(item), id: 'legacy-' + item });
         setRecentSearches(normalized);
     }, [isSearchActive]);
 
     const addToRecent = (item) => {
-        let current = JSON.parse(localStorage.getItem('recentSearches') || '[]');
-        // Remove duplicates by ID (if obj) or Name (if string)
-        current = current.filter(i => (typeof i === 'object' ? i.id !== item.id : i !== item.name));
+        let current = [];
+        try {
+            const raw = localStorage.getItem('recentSearches');
+            if (raw && raw !== "[object Object]") {
+                try {
+                    current = JSON.parse(raw);
+                    if (!Array.isArray(current)) current = [];
+                } catch (parseErr) {
+                    current = [];
+                }
+            }
+        } catch (e) { current = []; }
 
-        // Add new to front
+        current = current.filter(i => (i && typeof i === 'object' ? i.id !== item.id : i !== item.name));
         const newItem = { id: item.id, name: item.name, poster_path: item.poster_path, date: new Date().toISOString() };
         current = [newItem, ...current].slice(0, 5);
 
@@ -138,6 +165,10 @@ const Header = ({ onLogout }) => {
     };
 
     const handleSuggestionClick = async (item) => {
+        // IMMEDIATE UI CLEAR - critical for removing black overlay
+        setIsSearchActive(false);
+        setShowSuggestions(false);
+        setSearchTerm('');
         addToRecent(item); // Save to Recents
 
         if (selectionMode.active) {
@@ -166,15 +197,11 @@ const Header = ({ onLogout }) => {
 
                     // Success UI
                     setShowSuccess(true);
-                    setShowSuggestions(false);
-                    setSearchTerm(''); // Clear search
-                    setIsSearchActive(false); // Close bar immediately
 
                     // Reset mode
                     setSelectionMode({ active: false, slotIndex: null });
 
                     // Navigate (Refresh Profile logic handled by onSnapshot in Profile.jsx)
-                    // We navigate just in case user is not on profile
                     setTimeout(() => {
                         setShowSuccess(false);
                         navigate('/profile');
@@ -185,9 +212,10 @@ const Header = ({ onLogout }) => {
             }
 
         } else {
-            navigate(`/tv/${item.id}`);
-            setSearchTerm('');
-            setShowSuggestions(false);
+            // Standard Navigation
+            setTimeout(() => {
+                navigate(`/tv/${item.id}`);
+            }, 50); // Small specific delay to ensure state clears first if needed, though state update is typically enough
         }
     };
 
@@ -196,17 +224,15 @@ const Header = ({ onLogout }) => {
         setIsSearchActive(true);
     };
 
-    const handleBlur = () => {
-        setTimeout(() => {
-            if (!searchTerm) {
-                setIsSearchActive(false);
-            }
-            setShowSuggestions(false);
-        }, 200);
-    };
+
 
     return (
-        <header className="header" style={{ justifyContent: 'space-between', padding: '0 40px' }}>
+        <header className="header" style={{
+            justifyContent: 'space-between',
+            padding: '0 15px', // Match CSS compressed padding
+            paddingTop: 'env(safe-area-inset-top)',
+            height: 'calc(56px + env(safe-area-inset-top))' // Explicit sync
+        }}>
             {/* Success Popup */}
             {showSuccess && (
                 <div style={{
@@ -245,12 +271,26 @@ const Header = ({ onLogout }) => {
             )}
 
             {/* LEFT SPACER */}
-            <div className="header-left" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+            <div className="header-left" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+                {/* Search Focus Overlay - Blank Black Page */}
+                {isSearchActive && (searchTerm || suggestions.length > 0 || recentSearches.length > 0) && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 'calc(56px + env(safe-area-inset-top))', // Start below header
+                        left: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        background: '#000', // Pure Black
+                        zIndex: 999, // Below Header (1000ish) but above content
+                        touchAction: 'none', // Prevent scrolling
+                        animation: 'fadeIn 0.2s ease-out'
+                    }} />
+                )}
                 <Notify />
             </div>
 
             {/* CENTER: DYNAMIC LOGO / SEARCH */}
-            <div ref={searchContainerRef} style={{ flex: 1, display: 'flex', justifyContent: 'center', position: 'relative' }}>
+            <div ref={searchContainerRef} style={{ flex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
                 <style>
                     {`
                     .search-input::placeholder {
@@ -267,7 +307,6 @@ const Header = ({ onLogout }) => {
                     <div
                         onClick={handleSClick}
                         style={{
-                            color: 'var(--accent-color)',
                             cursor: 'pointer',
                             zIndex: 10,
                             whiteSpace: 'nowrap',
@@ -275,9 +314,9 @@ const Header = ({ onLogout }) => {
                             opacity: isSearchActive ? 0 : 1,
                             width: isSearchActive ? 0 : 'auto',
                             overflow: 'hidden',
-                            marginRight: isSearchActive ? 0 : '2px'
+                            marginRight: isSearchActive ? 0 : '0px'
                         }}
-                        className="app-logo-text"
+                        className="app-logo-text logo-s-part"
                     >
                         S
                     </div>
@@ -320,30 +359,32 @@ const Header = ({ onLogout }) => {
                         </form>
                     </div>
 
-                    {/* "ERIEE" Text - Clickable to Close */}
+                    {/* "ERIEE" Text - Conditional Visibility to avoid overlap */}
                     <div
                         onClick={() => setIsSearchActive(false)}
                         style={{
-                            color: 'var(--text-primary)',
                             transition: 'all 0.5s ease',
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
-                            marginLeft: isSearchActive ? '10px' : '2px',
+                            opacity: isSearchActive ? 0 : 1,
+                            width: isSearchActive ? 0 : 'auto',
+                            overflow: 'hidden'
                         }}
-                        className="app-logo-text"
+                        className="app-logo-text logo-eriee-part"
                     >
                         ERIEE
                     </div>
                 </div>
 
                 {/* Suggestions / Recents Dropdown */}
-                {((showSuggestions && suggestions.length > 0) || (isSearchActive && !searchTerm && recentSearches.length > 0)) && (
+                {isSearchActive && ((showSuggestions && suggestions.length > 0) || (!searchTerm && recentSearches.length > 0)) && (
                     <div className="suggestions-dropdown-responsive" style={{
                         position: 'absolute',
                         top: '100%',
-                        left: '50%',
+                        left: '50%', // Centered relative to container
                         transform: 'translateX(-50%)',
-                        width: '300px',
+                        width: '90vw', // Mobile Width
+                        maxWidth: '400px', // Desktop Limit
                         // background/border handled by class (Black/Square)
                         zIndex: 1000,
                         marginTop: '10px',
@@ -369,7 +410,7 @@ const Header = ({ onLogout }) => {
                                     <img
                                         src={`https://image.tmdb.org/t/p/w92${s.poster_path}`}
                                         alt={s.name}
-                                        style={{ width: '40px', height: '60px', objectFit: 'cover', borderRadius: '4px' }}
+                                        style={{ width: '30px', height: '45px', objectFit: 'cover', borderRadius: '2px' }} // Smaller 30px
                                         onError={(e) => e.target.style.display = 'none'}
                                     />
                                     <div>
@@ -402,10 +443,10 @@ const Header = ({ onLogout }) => {
                                             <img
                                                 src={`https://image.tmdb.org/t/p/w92${s.poster_path}`}
                                                 alt={s.name}
-                                                style={{ width: '40px', height: '60px', objectFit: 'cover', borderRadius: '4px' }}
+                                                style={{ width: '30px', height: '45px', objectFit: 'cover', borderRadius: '2px' }}
                                             />
                                         ) : (
-                                            <div style={{ width: '40px', height: '60px', background: '#333', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <div style={{ width: '30px', height: '45px', background: '#333', borderRadius: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                 <FaSearch color="#666" />
                                             </div>
                                         )}
@@ -421,7 +462,7 @@ const Header = ({ onLogout }) => {
             </div>
 
             {/* RIGHT SPACER */}
-            <div style={{ flex: 1 }}></div>
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}></div>
         </header>
     );
 };

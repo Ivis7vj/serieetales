@@ -1,14 +1,17 @@
 
-import { MdSettings, MdLogout, MdDeleteForever, MdLightMode, MdDarkMode } from 'react-icons/md';
+import { MdSettings, MdLogout, MdDeleteForever, MdLightMode, MdDarkMode, MdReportProblem } from 'react-icons/md';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { useNotification } from '../context/NotificationContext';
+import ReportProblemSheet from '../components/ReportProblemSheet';
 import './Home.css';
+import { useState } from 'react';
 
 const Settings = () => {
     const navigate = useNavigate();
     const { theme, toggleTheme } = useTheme();
     const { confirm } = useNotification();
+    const [isReportOpen, setIsReportOpen] = useState(false);
 
     const handleLogout = () => {
         localStorage.removeItem('currentUser');
@@ -27,59 +30,76 @@ const Settings = () => {
         <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', color: 'var(--text-primary)' }}>
             <h1 style={{ fontSize: '2.5rem', fontWeight: '900', marginBottom: '40px', color: 'var(--text-primary)' }}>Settings</h1>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
-                <div style={{ padding: '20px', background: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                    <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-primary)' }}>
-                        <MdSettings /> Account Actions
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* Account Actions Section */}
+                <div style={{ padding: '0 0 20px 0', borderBottom: '1px solid #1a1a1a' }}>
+                    <h3 style={{ fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '20px', fontWeight: '800' }}>
+                        Account
                     </h3>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
                         <button
                             onClick={handleLogout}
                             style={{
-                                padding: '12px 20px',
-                                borderRadius: '6px',
-                                border: '1px solid var(--border-color)',
                                 background: 'transparent',
-                                color: 'var(--text-primary)',
+                                border: 'none',
+                                padding: '0',
+                                textAlign: 'left',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '10px',
-                                fontWeight: 'bold',
-                                fontSize: '1rem',
-                                transition: 'background 0.2s'
+                                gap: '15px',
+                                color: '#FFFFFF',
+                                fontWeight: '600',
+                                fontSize: '1.1rem'
                             }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                         >
-                            <MdLogout size={20} /> Log Out
+                            <MdLogout size={22} color="#666" /> Log Out
+                        </button>
+
+                        <button
+                            onClick={() => setIsReportOpen(true)}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: '0',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px'
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                <MdReportProblem size={22} color="#666" />
+                                <span style={{ color: '#FFFFFF', fontSize: '1.1rem', fontWeight: '600' }}>Report a problem</span>
+                            </div>
+                            <span style={{ color: '#666', fontSize: '0.85rem', marginLeft: '37px' }}>Something not working? Tell us.</span>
                         </button>
 
                         <button
                             onClick={handleDeleteAccount}
                             style={{
-                                padding: '12px 20px',
-                                borderRadius: '6px',
+                                background: 'transparent',
                                 border: 'none',
-                                background: '#dc3545',
-                                color: '#fff',
+                                padding: '0',
+                                textAlign: 'left',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '10px',
-                                fontWeight: 'bold',
-                                fontSize: '1rem',
-                                transition: 'background 0.2s'
+                                gap: '15px',
+                                color: '#ff4444',
+                                fontWeight: '600',
+                                fontSize: '1.1rem'
                             }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = '#bb2d3b'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = '#dc3545'}
                         >
-                            <MdDeleteForever size={20} /> Delete Account
+                            <MdDeleteForever size={22} color="#ff4444" /> Delete Account
                         </button>
                     </div>
                 </div>
             </div>
+
+            <ReportProblemSheet isOpen={isReportOpen} onClose={() => setIsReportOpen(false)} />
         </div>
     );
 };

@@ -17,22 +17,38 @@ if (!firebaseConfig.apiKey) {
     console.error("Firebase API Key is missing! Check your .env file.");
 }
 
-import { getAuth } from "firebase/auth";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getRemoteConfig } from "firebase/remote-config"; // Import Remote Config
 
 // Initialize Firebase
-let app, auth, db;
+let app, auth, db, remoteConfig;
 try {
     if (!firebaseConfig.apiKey) throw new Error("Missing API Key");
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    remoteConfig = getRemoteConfig(app); // Initialize Remote Config
+
+    // Set persistence to local (survives app restart/close)
+    setPersistence(auth, browserLocalPersistence).catch(err => {
+        console.error("Firebase Persistence Error:", err);
+    });
+
+    // Default configs to prevent errors before fetch
+    remoteConfig.settings.minimumFetchIntervalMillis = 3600000; // 1 hour default (dev: set lower)
+    remoteConfig.defaultConfig = {
+        "latest_version": "1.0.0",
+        "changelog": JSON.stringify(["Welcome to SERIEE"])
+    };
+
 } catch (error) {
     console.error("Firebase Initialization Error:", error);
     // Continue with nulls to allow App to mount and show ErrorBoundary
     app = null;
     auth = null;
     db = null;
+    remoteConfig = null;
 }
 
-export { auth, db };
+export { auth, db, remoteConfig };

@@ -1,26 +1,23 @@
 import React, { forwardRef } from 'react';
-import { MdStar } from 'react-icons/md';
-import { resolvePoster } from '../utils/posterResolution';
+import { MdStar, MdStarHalf } from 'react-icons/md';
+import { getResolvedPosterUrl } from '../utils/globalPosterResolver';
 
-const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted }, ref) => {
+const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted, globalPosters = {} }, ref) => {
     // Inline SVG placeholders (no external network calls needed)
     const defaultPosterSvg = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="500" height="750"%3E%3Crect width="500" height="750" fill="%23333"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="24" fill="%23fff"%3ENo Image%3C/text%3E%3C/svg%3E';
     const defaultPfpSvg = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="150" height="150"%3E%3Ccircle cx="75" cy="75" r="75" fill="%23666"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" font-family="Arial" font-size="60" fill="%23fff"%3EU%3C/text%3E%3C/svg%3E';
 
     // Resolve dynamic poster
-    // If seasonCompleted is true, we assume movie contains season info or we try to resolve specifics
-    // movie object structure varies, we need: seriesId (movie.id), seasonNumber (movie.seasonNumber?)
-
-    // Attempt to extract Series ID and Season Number
-    // Note: 'movie' prop is often just the TMDB series object or a constructed activity item
     const seriesId = movie.seriesId || movie.id;
-    // We try to find season number from movie prop or props
-    const seasonNum = movie.seasonNumber || (movie.seasonEpisode ? parseInt(movie.seasonEpisode.replace('S', '')) : null);
 
-    const resolvedPath = resolvePoster(user, seriesId, seasonNum, null);
+    // Use global poster resolver ONLY if it's a Series sticker (no season/episode specific info)
+    // For Seasons/Episodes, 'movie.poster_path' is already carefully selected by the caller (handleShare)
+    const useGlobalResolution = !movie.seasonEpisode;
 
-    // Use resolved path > movie.poster_path > default
-    const finalPosterPath = resolvedPath || movie.poster_path;
+    // Logic: If Series, try global resolve. If Season/Ep (or resolve failed), use passed path.
+    const resolvedGlobal = useGlobalResolution ? getResolvedPosterUrl(seriesId, movie.poster_path, globalPosters, 'w500') : null;
+
+    const finalPosterPath = resolvedGlobal || movie.poster_path;
 
     const posterUrl = finalPosterPath
         ? `https://image.tmdb.org/t/p/w500${finalPosterPath}?v=${new Date().getTime()}`
@@ -31,9 +28,8 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted }, ref) 
         : defaultPfpSvg;
     const username = user?.username || 'User';
 
-    // Generate star array based on rating (0-10 scale to 5 stars)
-    // User ratings are 0-10, convert to 5-star scale
-    const starCount = Math.round(rating / 2);
+    // Generate star array based on rating (0-10 or 0-5 scale)
+    const normalizedRating = rating > 5 ? rating / 2 : rating;
 
     return (
         <div
@@ -54,44 +50,20 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted }, ref) 
                 position: 'relative'
             }}
         >
-            {/* TOP: User PFP + Username */}
+            {/* TOP: Username (PFP Removed as requested) */}
             <div style={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                marginBottom: '80px'
+                marginBottom: '40px'
             }}>
-                <img
-                    src={pfpUrl}
-                    alt="User Profile"
-                    crossOrigin="anonymous"
-                    onLoad={() => {
-                        // Signal that PFP is loaded (passed via ref if needed)
-                        if (ref && ref.current) {
-                            ref.current.setAttribute('data-pfp-loaded', 'true');
-                        }
-                    }}
-                    style={{
-                        width: '140px',
-                        height: '140px',
-                        borderRadius: '50%',
-                        objectFit: 'cover',
-                        border: '3px solid rgba(255, 255, 255, 0.15)',
-                        marginBottom: '24px',
-                        backgroundColor: '#222'
-                    }}
-                    onError={(e) => {
-                        e.target.src = defaultPfpSvg;
-                        if (ref && ref.current) {
-                            ref.current.setAttribute('data-pfp-loaded', 'true');
-                        }
-                    }}
-                />
                 <span style={{
-                    fontSize: '32px',
-                    fontWeight: '600',
-                    color: '#ffffff',
-                    letterSpacing: '0.5px'
+                    fontSize: '42px',
+                    fontWeight: '800',
+                    color: '#FFD600',
+                    letterSpacing: '1px',
+                    textTransform: 'uppercase',
+                    fontFamily: "'Anton', 'Impact', sans-serif"
                 }}>
                     @{username}
                 </span>
@@ -232,14 +204,28 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted }, ref) 
             }}>
                 {/* Stars */}
                 <div style={{ display: 'flex', gap: '6px' }}>
-                    {[...Array(5)].map((_, i) => (
-                        <MdStar
-                            key={i}
-                            size={52}
-                            color={i < starCount ? '#FFD600' : '#333333'}
-                            style={{ filter: i < starCount ? 'drop-shadow(0 0 8px rgba(255, 214, 0, 0.4))' : 'none' }}
-                        />
-                    ))}
+                    {[1, 2, 3, 4, 5].map((star) => {
+                        const isFull = normalizedRating >= star;
+                        const isHalf = normalizedRating >= star - 0.5 && normalizedRating < star;
+
+                        return (
+                            <div key={star} style={{ position: 'relative' }}>
+                                {isHalf ? (
+                                    <MdStarHalf
+                                        size={52}
+                                        color="#FFD600"
+                                        style={{ filter: 'drop-shadow(0 0 8px rgba(255, 214, 0, 0.4))' }}
+                                    />
+                                ) : (
+                                    <MdStar
+                                        size={52}
+                                        color={isFull ? '#FFD600' : '#222'}
+                                        style={{ filter: isFull ? 'drop-shadow(0 0 8px rgba(255, 214, 0, 0.4))' : 'none' }}
+                                    />
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
                 {/* Text */}
                 <span style={{
