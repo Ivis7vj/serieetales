@@ -38,7 +38,14 @@ import ScrollToTop from './components/ScrollToTop';
 import { App as NativeApp } from '@capacitor/app';
 import UpdateManager from './components/UpdateManager';
 import GlobalErrorAutomation from './components/GlobalErrorAutomation';
-import './utils/errorAutomation'; // Initialize global error listeners
+import { CapacitorUpdater } from '@capgo/capacitor-updater'; // Import
+
+// ... inside App component ...
+// Notify Capacitor Updater that the app has launched successfully
+// This prevents rollback to the previous version
+React.useEffect(() => {
+  CapacitorUpdater.notifyAppReady();
+}, []);
 import { Capacitor } from '@capacitor/core';
 import PremiumLoader from './components/PremiumLoader';
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { MdStar, MdStarBorder, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken, MdCelebration, MdMovie } from 'react-icons/md';
+import { MdStar, MdStarBorder, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdKeyboardArrowUp, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken, MdCelebration, MdMovie } from 'react-icons/md';
 import { FaArrowLeft } from 'react-icons/fa';
 import ReviewModal from '../components/ReviewModal';
 import PosterUnlockPopup from '../components/PosterUnlockPopup';
@@ -125,6 +125,9 @@ const MovieDetails = () => {
     const posterContainerRef = useRef(null);
     const [showEditHint, setShowEditHint] = useState(false);
     const [isEditButtonGlowing, setIsEditButtonGlowing] = useState(false);
+
+    // Custom Season Dropdown State
+    const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
 
     // Selected Season (must be declared before useEffect that uses it)
     const [selectedSeason, setSelectedSeason] = useState(seasonNumber ? parseInt(seasonNumber) : 1);
@@ -926,6 +929,9 @@ const MovieDetails = () => {
     }, [episodeWatchedIDs, seasonDetails]);
 
     // Centralized Season Completion Trigger
+    // Centralized Season Completion Trigger
+    // REMOVED PASSIVE TRIGGER as per User Request
+    /*
     useEffect(() => {
         if (isWatched && details && userData) {
             const completedKey = String(details.id);
@@ -938,6 +944,7 @@ const MovieDetails = () => {
             }
         }
     }, [isWatched, details, userData, selectedSeason]);
+    */
 
     const checkEpisodeInWatchlist = (epId) => {
         return episodeWatchlistIDs.includes(epId);
@@ -977,6 +984,23 @@ const MovieDetails = () => {
                     episodeNumber: episode.episode_number,
                     posterPath: details.poster_path // Series poster for episodes usually
                 });
+
+                // MANUAL COMPLETION CHECK (New)
+                const currentWatchedSet = new Set(episodeWatchedIDs);
+                currentWatchedSet.add(key); // Ensure current is added for check
+
+                // Check if all episodes in THIS season are watched
+                if (seasonDetails && seasonDetails.episodes) {
+                    const allCheck = seasonDetails.episodes.every(ep => {
+                        const epKey = `${ep.season_number}-${ep.episode_number}`;
+                        return currentWatchedSet.has(epKey);
+                    });
+
+                    if (allCheck) {
+                        console.log("Season Completed via Episode Toggle! Triggering flow...");
+                        handleSeasonCompletedFlow(episode.season_number);
+                    }
+                }
             }
         }
 
@@ -1037,6 +1061,9 @@ const MovieDetails = () => {
                         seasonNumber: selectedSeason,
                         posterPath: seasonDetails?.poster_path || details.poster_path
                     });
+
+                    // MANUAL TRIGGER FOR POPUP
+                    handleSeasonCompletedFlow(selectedSeason);
 
                     // CHECK SERIES COMPLETION
                     if (details.seasons) {
@@ -2248,48 +2275,100 @@ const MovieDetails = () => {
                                         )
                                     */}
 
-                                {/* Season Swipeable List (Horizontal) */}
+                                {/* Season Swipeable List (Custom Animated Dropdown - Premium Black) */}
                                 <div style={{
-                                    display: 'flex',
-                                    gap: '10px',
-                                    overflowX: 'auto',
-                                    padding: '5px 0 15px 0',
                                     width: '100%',
-                                    maxWidth: '100%',
-                                    scrollbarWidth: 'none', // Hide scrollbar Firefox
-                                    msOverflowStyle: 'none',  // Hide scrollbar IE/Edge
-                                    WebkitOverflowScrolling: 'touch' // Smooth scrolling iOS
+                                    padding: '0 5px',
+                                    marginBottom: '10px',
+                                    position: 'relative', // For absolute dropdown
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-start' // Align left
                                 }}>
-                                    <style>
-                                        {`
-                                            .season-swipe-container::-webkit-scrollbar {
-                                                display: none;
-                                            }
-                                        `}
-                                    </style>
-                                    {seasonsValues.map(s => (
-                                        <button
-                                            key={s.id}
-                                            onClick={() => handleSeasonChange({ target: { value: s.season_number } })}
-                                            className="season-swipe-container"
-                                            style={{
-                                                background: selectedSeason === s.season_number ? '#E50914' : '#333',
-                                                color: 'white',
-                                                border: 'none',
-                                                padding: '8px 16px',
-                                                borderRadius: '20px',
-                                                fontSize: '0.9rem',
-                                                cursor: 'pointer',
-                                                whiteSpace: 'nowrap',
-                                                fontWeight: 'bold',
-                                                transition: 'all 0.2s ease',
-                                                flexShrink: 0,
-                                                boxShadow: selectedSeason === s.season_number ? '0 4px 10px rgba(229, 9, 20, 0.4)' : 'none'
-                                            }}
-                                        >
-                                            {s.name || `Season ${s.season_number}`}
-                                        </button>
-                                    ))}
+                                    {/* TRIGGER BUTTON */}
+                                    <div
+                                        onClick={() => setIsSeasonDropdownOpen(!isSeasonDropdownOpen)}
+                                        style={{
+                                            backgroundColor: '#1a1a1a', // Slightly lighter than #000 for button
+                                            color: '#fff',
+                                            border: '1px solid #333',
+                                            borderRadius: '4px', // Standard radius
+                                            padding: '8px 12px', // Medium Small Padding
+                                            fontSize: '0.95rem', // Medium Small Font
+                                            fontWeight: '700', // Bold
+                                            fontFamily: 'Inter, sans-serif',
+                                            width: 'auto', // Auto width to fit content
+                                            minWidth: '150px', // Min width for consistency
+                                            maxWidth: '250px', // Max width constraint
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            textTransform: 'uppercase', // "SEASON 1"
+                                            userSelect: 'none',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                    >
+                                        <span style={{ marginRight: '15px', whiteSpace: 'nowrap' }}>Season {selectedSeason}</span>
+                                        {isSeasonDropdownOpen ? <MdKeyboardArrowUp size={18} /> : <MdKeyboardArrowDown size={18} />}
+                                    </div>
+
+                                    {/* DROPDOWN MENU */}
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: '5px', // Align with trigger padding
+                                        width: 'auto', // Auto width
+                                        minWidth: '150px', // Match trigger min
+                                        maxWidth: '250px', // Match trigger max
+                                        backgroundColor: '#000', // Pure Black
+                                        border: isSeasonDropdownOpen ? '1px solid #333' : 'none',
+                                        borderRadius: '4px',
+                                        marginTop: '5px',
+                                        overflow: 'hidden',
+                                        maxHeight: isSeasonDropdownOpen ? '300px' : '0px', // ANIMATION: Height
+                                        opacity: isSeasonDropdownOpen ? 1 : 0,
+                                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', // SMOOTH ANIMATION
+                                        zIndex: 100,
+                                        boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
+                                    }}>
+                                        {seasonsValues.sort((a, b) => a.season_number - b.season_number).map(s => (
+                                            <div
+                                                key={s.id}
+                                                onClick={() => {
+                                                    handleSeasonChange({ target: { value: s.season_number } });
+                                                    setIsSeasonDropdownOpen(false);
+                                                }}
+                                                style={{
+                                                    background: selectedSeason === s.season_number ? '#222' : 'transparent',
+                                                    color: selectedSeason === s.season_number ? '#fff' : '#aaa',
+                                                    padding: '8px 12px', // Compact Item Padding
+                                                    fontSize: '0.9rem', // Compact Item Font
+                                                    fontWeight: '600',
+                                                    fontFamily: 'Inter, sans-serif',
+                                                    cursor: 'pointer',
+                                                    textTransform: 'uppercase',
+                                                    borderBottom: '1px solid #111',
+                                                    transition: 'background 0.2s',
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (selectedSeason !== s.season_number) {
+                                                        e.currentTarget.style.background = '#111';
+                                                        e.currentTarget.style.color = '#fff';
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (selectedSeason !== s.season_number) {
+                                                        e.currentTarget.style.background = 'transparent';
+                                                        e.currentTarget.style.color = '#aaa';
+                                                    }
+                                                }}
+                                            >
+                                                {s.name || `Season ${s.season_number}`}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}

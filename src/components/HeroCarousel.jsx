@@ -92,19 +92,37 @@ const HeroCarousel = ({ episodes = [] }) => {
 
                         {/* Content */}
                         <div className="hero-slide-content">
-                            <div className="hero-slide-eyebrow">
-                                <MdLocalFireDepartment color="#ffd700" size={16} />
-                                {series.genres?.[0]?.name || 'Trending Now'}
-                            </div>
+                            {/* Dynamic Eyebrow based on air date */}
+                            {(() => {
+                                const today = new Date().setHours(0, 0, 0, 0);
+                                const nextEp = series.next_episode_to_air;
+                                const lastEp = series.last_episode_to_air;
 
-                            <h2 className="hero-slide-title">{series.name}</h2>
+                                let isUpcoming = false;
+                                let displayEp = lastEp;
 
-                            {/* Metadata using last_episode_to_air (Released) */}
-                            {series.last_episode_to_air && (
-                                <div className="hero-slide-meta">
-                                    S{series.last_episode_to_air.season_number} E{series.last_episode_to_air.episode_number} • {series.last_episode_to_air.name}
-                                </div>
-                            )}
+                                if (nextEp && new Date(nextEp.air_date) >= today) {
+                                    isUpcoming = true;
+                                    displayEp = nextEp;
+                                }
+
+                                return (
+                                    <>
+                                        <div className="hero-slide-eyebrow" style={{ color: isUpcoming ? '#FFD700' : '#fff' }}>
+                                            <MdLocalFireDepartment color={isUpcoming ? '#FFD700' : '#E50914'} size={16} />
+                                            {isUpcoming ? `UPCOMING • ${new Date(displayEp.air_date).toLocaleDateString()}` : 'EPISODE IN AIR'}
+                                        </div>
+
+                                        <h2 className="hero-slide-title">{series.name}</h2>
+
+                                        {displayEp && (
+                                            <div className="hero-slide-meta">
+                                                S{displayEp.season_number} E{displayEp.episode_number} • {displayEp.name}
+                                            </div>
+                                        )}
+                                    </>
+                                );
+                            })()}
 
                             <button
                                 className="hero-view-btn"

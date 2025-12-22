@@ -4,7 +4,7 @@ import { fetchAndActivate, getString } from "firebase/remote-config";
 import { remoteConfig } from "../firebase-config";
 
 // THIS APP'S VERSION (Hardcoded because it's baked into the APK)
-export const APP_VERSION = '1.0.2';
+export const APP_VERSION = '2.0.0';
 
 // Key to store in localStorage to track if update was seen
 export const STORAGE_KEY_VERSION = 'app_version_code';
@@ -51,8 +51,10 @@ export const getChangelog = async () => {
     if (!remoteConfig) return ["Update available!"];
     try {
         const raw = getString(remoteConfig, "changelog");
+        // console.log("Remote Changelog Raw:", raw); 
         return raw ? JSON.parse(raw) : ["New features and improvements available."];
     } catch (error) {
+        console.error("Changelog Parse Error:", error, "Raw Value:", getString(remoteConfig, "changelog"));
         return ["Check the Play Store for details."];
     }
 };

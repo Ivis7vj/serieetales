@@ -1,12 +1,31 @@
+import { useState, useEffect } from 'react';
 import { MdHome, MdStarBorder, MdAdd, MdPublic, MdPeople, MdInsertChart } from 'react-icons/md';
 import { CgProfile } from 'react-icons/cg';
 import { IoSettingsOutline } from 'react-icons/io5';
 
 import { NavLink } from 'react-router-dom';
 import MobileIndicator from './MobileIndicator';
+import { useAuth } from '../context/AuthContext';
+import { activityService } from '../utils/activityService';
 import '../pages/Home.css';
 
 const Sidebar = () => {
+    const { userData } = useAuth();
+    const [hasActivity, setHasActivity] = useState(false);
+
+    useEffect(() => {
+        const checkActivity = async () => {
+            if (userData) {
+                const hasNew = await activityService.hasNewActivity(userData);
+                setHasActivity(hasNew);
+            }
+        };
+
+        checkActivity();
+        // Optional: Poll every minute? Strict requirement says "real content only", doesn't imply real-time socket.
+        // Checking on mount/update is sufficient for "app open" or "nav".
+    }, [userData]);
+
     return (
         <aside className="left-sidebar">
             <nav className="sidebar-nav">
@@ -63,24 +82,18 @@ const Sidebar = () => {
                 >
                     <MdPeople size={28} />
                     <span className="sidebar-text">Friends</span>
-                    {/* Activity Dot */}
-                    <div style={{
-                        position: 'absolute',
-                        top: '10px',
-                        right: '10px',
-                        width: '8px',
-                        height: '8px',
-                        background: '#FF4136',
-                        borderRadius: '50%',
-                        border: '1px solid #1a1a1a',
-                        display: 'none' // Hidden by default, enable via class or state later if needed
-                        // For now we will force it visible if local storage says so? 
-                        // User requirement: "indicate that user friend is done some activities"
-                        // I'll make it conditionally visible if a prop or state is true.
-                        // For this task, I will leave it as a style block that can be toggled. 
-                        // Or better, just render it:
-                    }}></div>
-                    <div className="friend-activity-dot" style={{ position: 'absolute', top: '15px', right: '15px', width: '8px', height: '8px', background: '#E50914', borderRadius: '50%', boxShadow: '0 0 5px #E50914', display: 'block' }}></div>
+                    {hasActivity && (
+                        <div className="friend-activity-dot" style={{
+                            position: 'absolute',
+                            top: '15px',
+                            right: '15px',
+                            width: '8px',
+                            height: '8px',
+                            background: '#E50914',
+                            borderRadius: '50%',
+                            boxShadow: '0 0 5px #E50914'
+                        }}></div>
+                    )}
                 </NavLink>
             </nav>
         </aside>

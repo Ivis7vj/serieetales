@@ -17,7 +17,7 @@ const config: CapacitorConfig = {
             splashImmersive: true
         },
         CapacitorUpdater: {
-            autoUpdate: true,
+            autoUpdate: false,
             statsUrl: "", // Optional: Your stats server
         }
     }

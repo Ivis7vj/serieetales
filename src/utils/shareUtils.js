@@ -11,12 +11,23 @@ export const generateShareImage = async (ref, options = {}) => {
     if (!ref) return null;
     const target = ref.current || ref;
 
-    return await toPng(target, {
-        pixelRatio: 2,
-        backgroundColor: '#000000',
-        cacheBust: true,
-        ...options
-    });
+    try {
+        return await toPng(target, {
+            pixelRatio: 2,
+            backgroundColor: '#000000',
+            cacheBust: true,
+            skipFonts: true, // Try to skip fonts to avoid cross-origin CSS rules access
+            ...options
+        });
+    } catch (error) {
+        console.warn("Retrying share image generation without some options due to error:", error);
+        // Fallback or retry?
+        // Often this specific error is non-fatal if ignored, but toPng throws.
+        // Let's try to return null or handle it. 
+        // Or maybe just skipFonts is enough?
+        // Let's just wrap it.
+        throw error;
+    }
 };
 
 /**

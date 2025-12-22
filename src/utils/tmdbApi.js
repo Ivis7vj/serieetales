@@ -118,13 +118,33 @@ export const tmdbApi = {
         return data.results || [];
     },
 
-    // Get Hero Episodes (On The Air)
+    // Get Hero Episodes (On The Air + Enriched Details)
     getHeroEpisodes: async (options = {}) => {
+        // Try to get from backend first
         const cached = await getFromBackend('/hero/new-episodes', options.forceDirect);
         if (cached) return cached;
 
-        const data = await fetchDirect('/tv/on_the_air');
-        return data.results || [];
+        try {
+            // 1. Fetch "On The Air" list
+            const listData = await fetchDirect('/tv/on_the_air');
+            const initialList = listData.results || [];
+
+            // 2. Fetch DETAILS for the top 40 results to get accurate air_dates
+            // We need 'next_episode_to_air' and 'last_episode_to_air' which are only in details
+            const enrichedPromises = initialList.slice(0, 40).map(async (show) => {
+                try {
+                    return await fetchDirect(`/tv/${show.id}`);
+                } catch (e) {
+                    return show; // Fallback to list object if fail
+                }
+            });
+
+            const enrichedList = await Promise.all(enrichedPromises);
+            return enrichedList;
+        } catch (error) {
+            console.error("Hero Fetch Error:", error);
+            return [];
+        }
     },
 
     // Search Series

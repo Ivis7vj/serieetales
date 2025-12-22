@@ -40,8 +40,47 @@ const Home = () => {
         setTopRatedSeries(topRated?.slice(0, 12) || []);
         setNewSeries(newReleases?.slice(0, 12) || []);
 
-        const validHero = (heroData || []).filter(s => s.backdrop_path || s.poster_path);
-        setHeroEpisodes(validHero.slice(0, 5));
+        const validHero = (heroData || []).filter(s => {
+          if (!s.backdrop_path && !s.poster_path) return false;
+
+          const today = new Date();
+          const twoWeeksAgo = new Date(today);
+          twoWeeksAgo.setDate(today.getDate() - 14);
+
+          const oneWeekFuture = new Date(today);
+          oneWeekFuture.setDate(today.getDate() + 7);
+
+          // Check Last Episode (Released)
+          let lastDate = null;
+          if (s.last_episode_to_air?.air_date) {
+            lastDate = new Date(s.last_episode_to_air.air_date);
+          }
+
+          // Check Next Episode (Upcoming)
+          let nextDate = null;
+          if (s.next_episode_to_air?.air_date) {
+            nextDate = new Date(s.next_episode_to_air.air_date);
+          }
+
+          // strict filter: must have an episode in the [-14, +7] days window
+          const isRecent = lastDate && lastDate >= twoWeeksAgo && lastDate <= today; // Released recently
+          const isUpcoming = nextDate && nextDate >= today && nextDate <= oneWeekFuture; // Coming soon
+
+          // attach metadata for sorting preference
+          s.filterDate = nextDate && isUpcoming ? nextDate : lastDate;
+          s.isUpcoming = !!(nextDate && isUpcoming); // Flag for UI
+
+          return isRecent || isUpcoming;
+        });
+
+        // Sorting: Upcoming/Today first, then descending by date
+        validHero.sort((a, b) => {
+          const dateA = new Date(a.filterDate || 0);
+          const dateB = new Date(b.filterDate || 0);
+          return dateB - dateA; // Newest/Future first
+        });
+
+        setHeroEpisodes(validHero.slice(0, 20)); // Show 20 items
 
         stopLoading();
       } catch (error) {
@@ -130,6 +169,7 @@ const Home = () => {
             </section>
           )}
         </div>
+
       )}
     </>
   );

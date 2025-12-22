@@ -7,6 +7,8 @@ import { MdPerson, MdSearch, MdClose, MdStar } from 'react-icons/md';
 import PremiumLoader from '../components/PremiumLoader';
 import './Friends.css';
 
+import { activityService } from '../utils/activityService';
+
 const Friends = () => {
     const { userData } = useAuth();
 
@@ -53,15 +55,6 @@ const Friends = () => {
                 } catch (e) {
                     // Invalid cache, ignore
                 }
-                // Background refresh could happen here if desired, but prompt says "No background polling".
-                // We'll proceed to fetch fresh data anyway if user wants latest? 
-                // Prompt: "Cache last fetch locally. Refresh on: App open". 
-                // So if cached exists, we use it. We won't re-fetch unless force refreshed (re-mount usually triggers this in React if component unmounts).
-                // But generally for a feed, it's good to fetch fresh. I'll stick to fetching if cache is old?
-                // Let's just fetch fresh to ensure "Refresh on App open/Pull down" behavior works if component remounts.
-                // Or better: clear cache on app start? 
-                // I'll respect the cache if present for speed, but maybe clear it on mount?
-                // Actually, let's fetch fresh for now to ensure data visibility during dev.
             }
 
             try {
@@ -87,6 +80,9 @@ const Friends = () => {
 
                 setActivities(validItems);
                 sessionStorage.setItem('friends_feed_cache_v3', JSON.stringify(validItems));
+
+                // MARK AS VIEWED when feed is successfully loaded
+                activityService.markActivityViewed();
 
             } catch (error) {
                 if (error.code === 'failed-precondition' && error.message.includes('index')) {

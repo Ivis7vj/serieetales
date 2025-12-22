@@ -147,10 +147,13 @@ const StickerSharePage = () => {
                             src={generatedImage}
                             alt="Sticker Preview"
                             style={{
-                                width: '100%',
+                                width: 'auto',
+                                maxWidth: '100%',
+                                maxHeight: '55vh',
                                 borderRadius: '16px',
                                 border: '1px solid #333',
-                                boxShadow: '0 20px 50px rgba(0,0,0,0.5)'
+                                boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+                                objectFit: 'contain'
                             }}
                         />
                         <button
