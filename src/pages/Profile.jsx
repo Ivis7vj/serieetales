@@ -229,24 +229,41 @@ const parseTmdbId = (id) => {
     return numeric;
 };
 
-// Helper: Hydrate Likes with TMDB Data (Strict SSOT Rule: No metadata in DB)
+// Helper: Hydrate Likes with TMDB Data (BSOT Rule: No metadata in DB)
 const hydrateLikes = async (likesList) => {
     if (!likesList || likesList.length === 0) return [];
 
     const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || '05587a49bd4890a9630d6c0e544e0f6f';
     const uniqueIds = [...new Set(likesList.map(l => l.tmdbId))];
+    const seriesMap = {};
 
-    // Fetch detailed data for each show via cached tmdbApi
-    const results = await Promise.all(uniqueIds.map(async (id) => {
-        try {
-            return await tmdbApi.getSeriesDetails(id);
-        } catch (e) { return null; }
-    }));
+    // Batch Processing to prevent TMDB 429 Errors / Heavy Load
+    // Process 5 items at a time with a delay
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
+        const batch = uniqueIds.slice(i, i + BATCH_SIZE);
 
-    const seriesMap = results.reduce((acc, curr) => {
-        if (curr) acc[curr.id] = curr;
-        return acc;
-    }, {});
+        // Execute batch in parallel
+        const results = await Promise.all(batch.map(async (id) => {
+            try {
+                // tmdbApi handles backend cache -> TMDB fallback
+                return await tmdbApi.getSeriesDetails(id);
+            } catch (e) {
+                console.warn(`Failed to hydrate series ${id}`, e);
+                return null;
+            }
+        }));
+
+        // Collect results
+        results.forEach(series => {
+            if (series) seriesMap[series.id] = series;
+        });
+
+        // Small delay between batches to respect rate limits (if hit TMDB)
+        if (i + BATCH_SIZE < uniqueIds.length) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
 
     return likesList.map(item => {
         const series = seriesMap[item.tmdbId];
@@ -714,9 +731,7 @@ const Profile = () => {
         setShowBannerSelection(true);
     };
 
-    const [basketModalData, setBasketModalData] = useState(null);
-
-    useScrollLock(editImageSrc || showFullPFP || basketModalData || showBannerSearch || showBannerSelection);
+    useScrollLock(editImageSrc || showFullPFP || showBannerSearch || showBannerSelection);
 
     // Grouping Logic for Watchlist (Deduplicated)
     const processWatchlist = (list) => {
@@ -790,12 +805,7 @@ const Profile = () => {
             // SUPABASE DELETE: Remove from SSOT
             await watchlistService.removeFromWatchlist(currentUser.uid, itemToRemove.id || itemToRemove.tmdb_id);
 
-            // Update local basket state if open
-            if (basketModalData) {
-                const newBasketEps = basketModalData.episodes.filter(i => (i.id || i.tmdb_id) !== (itemToRemove.id || itemToRemove.tmdb_id));
-                if (newBasketEps.length === 0) setBasketModalData(null);
-                else setBasketModalData({ ...basketModalData, episodes: newBasketEps });
-            }
+
         } catch (error) {
             console.error("Error removing from watchlist:", error);
         }
@@ -868,6 +878,9 @@ const Profile = () => {
                                                         <div className="diary-poster-date">
                                                             {dateBadge}
                                                         </div>
+                                                        {item.seasonNumber && (
+                                                            <div className="diary-season-badge" style={{ bottom: '30px', right: '6px', fontSize: '0.8rem', padding: '4px 6px', position: 'absolute', zIndex: 6, background: 'rgba(0,0,0,0.8)', borderRadius: '4px', color: '#fff', fontWeight: 'bold' }}>S{item.seasonNumber}</div>
+                                                        )}
                                                     </Link>
 
                                                     <div className="diary-info">
@@ -891,7 +904,7 @@ const Profile = () => {
                             <ActivityFeed userId={targetUid} feed={userActivityFeed} />
                         </div>
                     );
-                case 'Watchlist':
+                case 'Tracking':
                 case 'Liked':
                     if (activeTab === 'Liked') {
                         return (
@@ -914,10 +927,14 @@ const Profile = () => {
                             {watchlistItems.map((item, idx) => {
                                 if (item.type === 'basket') {
                                     return (
-                                        <div key={idx} onClick={() => setBasketModalData(item)} style={{ cursor: 'pointer', display: 'block', width: '100%', border: '1px solid var(--border-color)', aspectRatio: '2/3', position: 'relative', overflow: 'hidden' }}>
+                                        <div
+                                            key={idx}
+                                            onClick={() => navigate(`/watchlist/season/${item.seriesId}/${item.seasonNumber}`)}
+                                            style={{ cursor: 'pointer', display: 'block', width: '100%', border: '1px solid var(--border-color)', aspectRatio: '2/3', position: 'relative', overflow: 'hidden' }}
+                                        >
                                             <img src={getResolvedPosterUrl(item.tmdbId, item.poster_path, profilePosters, 'w500') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
                                             {/* Basket Badges */}
-                                            <div className="diary-season-badge" style={{ top: '6px', right: '6px', fontSize: '0.8rem', padding: '4px 6px' }}>S{item.seasonNumber}</div>
+                                            <div className="diary-season-badge" style={{ bottom: '6px', right: '6px', top: 'auto', fontSize: '0.8rem', padding: '4px 6px', position: 'absolute', zIndex: 5, background: 'rgba(0,0,0,0.8)', color: '#fff', borderRadius: '4px', fontWeight: 'bold' }}>S{item.seasonNumber}</div>
                                             <div className="diary-eps-badge" style={{ bottom: '6px', right: '6px', fontSize: '0.75rem' }}>{item.episodeCount} EPS</div>
                                         </div>
                                     );
@@ -928,7 +945,7 @@ const Profile = () => {
                                             <Link to={`/tv/${item.tmdbId}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative', overflow: 'visible' }}>
                                                 <img src={getResolvedPosterUrl(item.tmdbId, item.poster_path, profilePosters, 'w500') || 'https://placehold.co/200x300/141414/FFFF00?text=No+Image'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
                                                 {item.seasonNumber && (
-                                                    <div className="diary-season-badge" style={{ top: '6px', right: '6px', fontSize: '0.8rem', padding: '4px 6px' }}>S{item.seasonNumber}</div>
+                                                    <div className="diary-season-badge" style={{ bottom: '6px', right: '6px', top: 'auto', fontSize: '0.8rem', padding: '4px 6px', position: 'absolute', zIndex: 5, background: 'rgba(0,0,0,0.8)', color: '#fff', borderRadius: '4px', fontWeight: 'bold' }}>S{item.seasonNumber}</div>
                                                 )}
                                             </Link>
                                         </div>
@@ -1310,37 +1327,7 @@ const Profile = () => {
                     </div>
                 )}
 
-                {/* BASKET MODAL */}
-                {basketModalData && (
-                    <div className="basket-modal-overlay" onClick={() => setBasketModalData(null)}>
-                        <div className="basket-modal-content" onClick={e => e.stopPropagation()}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                                <div className="basket-header" style={{ marginBottom: 0 }}>SEASON {basketModalData.seasonNumber}</div>
-                                <button onClick={() => setBasketModalData(null)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.5rem', cursor: 'pointer' }}><MdClose /></button>
-                            </div>
 
-                            <div className="basket-list">
-                                {basketModalData.episodes.map(ep => {
-                                    let cleanTitle = ep.name;
-                                    if (cleanTitle.includes(': ')) cleanTitle = cleanTitle.split(': ').pop();
-                                    return (
-                                        <div key={ep.id} className="basket-item">
-                                            <div className="basket-img-wrapper">
-                                                <img src={`https://image.tmdb.org/t/p/w200${ep.still_path || ep.poster_path}`} alt="Ep" />
-                                                <button className="remove-watchlist-btn" onClick={() => handleRemoveFromWatchlist(ep)}>
-                                                    <MdCheck color="var(--accent-color)" />
-                                                </button>
-                                            </div>
-                                            <div className="basket-info-col">
-                                                <div className="ep-title">{cleanTitle}</div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 <div className="profile-header-grid" style={{ minHeight: isCollapsed ? '0px' : 'auto' }}>
                     <div className={`collapsible-header-content ${isCollapsed ? 'collapsed' : ''}`}>
@@ -1404,10 +1391,10 @@ const Profile = () => {
                 </div>
 
                 <div className="nav-scroll-container hide-scrollbar">
-                    {['Profile', 'Diary', 'Activity', 'Watchlist', 'Liked'].map(tab => (
+                    {['Profile', 'Diary', 'Activity', 'Tracking', 'Liked'].map(tab => (
                         <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'Activity') { setHasNewActivity(false); if (userActivityFeed[0]) localStorage.setItem(`lastSeenActivity_${currentUser.uid}`, userActivityFeed[0]?.createdAt); } }} className="nav-tab-btn" style={{ position: 'relative', color: activeTab === tab ? '#FFFFFF' : 'var(--text-muted)', fontWeight: activeTab === tab ? 'bold' : 'normal', borderBottom: activeTab === tab ? '3px solid var(--accent-color)' : '3px solid transparent' }}>
                             {tab}
-                            {tab === 'Diary' && <MobileIndicator id="diary-tab-tip" message="Your watch history 📖" position="bottom" />}
+                            {tab === 'Diary' && <MobileIndicator id="diary-tab-tip" message="Your itemized tracking history" position="bottom" />}
                             {tab === 'Activity' && hasNewActivity && <div style={{ position: 'absolute', top: '10px', right: '10px', width: '8px', height: '8px', background: '#FF4136', borderRadius: '50%' }}></div>}
                         </button>
                     ))}

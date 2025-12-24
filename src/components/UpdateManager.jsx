@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { APP_VERSION, STORAGE_KEY_VERSION, getLatestVersion, getChangelog, getDownloadUrl, getCodeBundleUrl, CHANGELOG_V1_0_1 } from '../utils/versionConfig';
-import { CapacitorUpdater } from '@capgo/capacitor-updater';
-import { MdSystemUpdate, MdCloudDownload, MdCheckCircle, MdClose, MdRocketLaunch } from 'react-icons/md';
-import SplashScreen from './SplashScreen';
-import UpdateAnimation from './UpdateAnimation';
-import './UpdateManager.css'; // Extract styles if needed, but inline is fine for now
+import { MdSystemUpdate, MdCloudDownload, MdCheckCircle, MdRocketLaunch } from 'react-icons/md';
+import { Capacitor } from '@capacitor/core';
+import './UpdateManager.css';
 
 const UpdateManager = () => {
     const [status, setStatus] = useState('idle'); // idle, prompt, updating, completed
@@ -16,25 +14,23 @@ const UpdateManager = () => {
 
     useEffect(() => {
         const checkVersion = async () => {
-            const storedVersion = localStorage.getItem(STORAGE_KEY_VERSION);
+            // Only run version check logic if we are NOT in the middle of an update status
+            if (status !== 'idle') return;
 
-            // ---------------------------------------------------------
-            // 2. REMOTE OTA CHECK (Is there a NEWER version?)
-            // ---------------------------------------------------------
             try {
                 const latestVer = await getLatestVersion();
                 console.log(`🔍 Version Check: Installed=${APP_VERSION}, Remote=${latestVer}`);
 
-                // STRICT CHECK: If versions match, DO NOTHING.
+                // If versions match, DO NOTHING.
                 if (latestVer === APP_VERSION) {
-                    // Ensure tracking is up to date
+                    const storedVersion = localStorage.getItem(STORAGE_KEY_VERSION);
                     if (storedVersion !== APP_VERSION) {
                         localStorage.setItem(STORAGE_KEY_VERSION, APP_VERSION);
                     }
                     return;
                 }
 
-                // If remote is NEWER
+                // If remote is NEWER (Basic string comparison might fail for complex semver, but OK for now)
                 if (latestVer > APP_VERSION) {
                     const changeLog = await getChangelog();
                     const apkUrl = await getDownloadUrl();
@@ -45,10 +41,10 @@ const UpdateManager = () => {
                     setDownloadUrl(apkUrl);
                     setCodeBundleUrl(zipUrl);
 
-                    // Delay prompt slightly
+                    // Delay prompt slightly to let App settle
                     setTimeout(() => {
                         setStatus('prompt');
-                    }, 2000);
+                    }, 3000);
                 }
 
             } catch (err) {
@@ -57,65 +53,26 @@ const UpdateManager = () => {
         };
 
         checkVersion();
-    }, []);
+    }, [status]); // Check again if status resets to idle
 
     const handleUpdate = async () => {
-        setStatus('updating');
-        setProgress(0);
-
-        // --- OPTION A: CODE PUSH (Hot Update) ---
-        if (codeBundleUrl && codeBundleUrl !== 'fake_url') {
-            try {
-                const version = await CapacitorUpdater.download({
-                    url: codeBundleUrl,
-                    version: remoteVersion
-                });
-                // Progress simulation for user feedback since `download` promise doesn't emit progress
-                let simProgress = 0;
-                const simInt = setInterval(() => {
-                    simProgress += 10;
-                    if (simProgress > 90) simProgress = 90;
-                    setProgress(simProgress);
-                }, 200);
-
-                await CapacitorUpdater.set(version);
-                clearInterval(simInt);
-                setProgress(100);
-
-                // CRITICAL: Do NOT set localStorage here. 
-                // We want the App to reload -> Startup Check -> "Stored != APP_VERSION" -> Show Changelog
-                setStatus('idle');
-                window.location.reload();
-            } catch (error) {
-                console.error("Code Push Failed:", error);
-                alert("Update failed. Please retry.");
-                setStatus('idle');
-            }
-            return;
+        // --- MANUAL DOWNLOAD FLOW ---
+        // Just open the link in the system browser
+        if (downloadUrl) {
+            window.open(downloadUrl, '_system');
+            // We don't set status to 'updating' because the user leaves the app locally
+            // But we can close the modal or keep it open to remind them.
+            // Let's close it so they can continue if they want (though they should update)
+            setStatus('idle');
+        } else {
+            alert("Update link missing. Please contact support.");
+            setStatus('idle');
         }
-
-        // --- OPTION B: FAKE/APK DOWNLOAD (Fallback or Test) ---
-        let currentProgress = 0;
-        const interval = setInterval(() => {
-            currentProgress += 1;
-            if (currentProgress >= 100) {
-                currentProgress = 100;
-                clearInterval(interval);
-
-                if (downloadUrl) {
-                    window.open(downloadUrl, '_system');
-                    setStatus('idle');
-                }
-            }
-            setProgress(currentProgress);
-        }, 50);
     };
 
     const handleCloseChangelog = () => {
         localStorage.setItem(STORAGE_KEY_VERSION, APP_VERSION);
         setStatus('idle');
-        // Reload to apply "new files" (simulated or real)
-        window.location.reload();
     };
 
     if (status === 'idle') return null;
@@ -125,9 +82,8 @@ const UpdateManager = () => {
         <div style={{
             position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
             zIndex: 99999, // Higher than everything
-            background: status === 'updating' ? '#000' : 'rgba(0,0,0,0.95)', // Pure black for update
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backdropFilter: 'blur(10px)'
+            background: 'rgba(0,0,0,0.95)', // Pure black
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
 
             {/* --- 1. PROMPT (Pure Black Card) --- */}
@@ -154,7 +110,7 @@ const UpdateManager = () => {
                     <p style={{ color: '#888', marginBottom: '30px', fontSize: '0.95rem', lineHeight: '1.5' }}>
                         Version <span style={{ color: '#fff', fontWeight: 'bold' }}>{remoteVersion}</span> is ready.
                         <br />
-                        {codeBundleUrl ? "Seamless instant update." : "Download required."}
+                        Download and install to continue.
                     </p>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -168,7 +124,7 @@ const UpdateManager = () => {
                             }}
                         >
                             <MdCloudDownload size={20} />
-                            UPDATE NOW
+                            DOWNLOAD UPDATE
                         </button>
 
                         <button
@@ -183,57 +139,6 @@ const UpdateManager = () => {
                         </button>
                     </div>
                 </div>
-            )}
-
-            {/* --- 2. UPDATING (Splash Screen Loop + Overlay) --- */}
-            {status === 'updating' && (
-                <>
-                    {/* Background Animation - Centered & Large */}
-                    <div style={{
-                        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%) scale(1.2)',
-                        width: '100%', height: '100%', zIndex: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                    }}>
-                        {/* We pass isUpdateMode to reuse the S-Logo animation loop */}
-                        <div style={{ transform: 'scale(0.8)' }}>
-                            <UpdateAnimation />
-                        </div>
-                    </div>
-
-                    {/* Foreground Info - Horizontal Loading */}
-                    <div style={{
-                        zIndex: 10, position: 'absolute', bottom: '15%', left: '50%', transform: 'translateX(-50%)',
-                        width: '80%', maxWidth: '300px', textAlign: 'center'
-                    }}>
-                        <h3 style={{
-                            color: '#fff', fontSize: '1rem', marginBottom: '15px',
-                            textTransform: 'uppercase', letterSpacing: '3px', fontWeight: 'bold',
-                            opacity: 0.9, fontFamily: 'monospace'
-                        }}>
-                            Updating Codebase...
-                        </h3>
-
-                        {/* Horizontal Progress Bar */}
-                        <div style={{
-                            width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)',
-                            borderRadius: '10px', overflow: 'hidden', position: 'relative',
-                            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.5)'
-                        }}>
-                            <div style={{
-                                width: `${progress}%`, height: '100%', background: '#FFD700',
-                                transition: 'width 0.1s linear',
-                                boxShadow: '0 0 10px rgba(255, 215, 0, 0.5)'
-                            }} />
-                        </div>
-                        <div style={{
-                            display: 'flex', justifyContent: 'space-between', marginTop: '8px',
-                            color: '#666', fontSize: '0.75rem', fontFamily: 'monospace', fontWeight: 'bold'
-                        }}>
-                            <span>Applying Patch</span>
-                            <span>{progress}%</span>
-                        </div>
-                    </div>
-                </>
             )}
 
             {/* --- 3. COMPLETED / CHANGELOG (Pure Black) --- */}

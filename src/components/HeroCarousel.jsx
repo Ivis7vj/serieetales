@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getResolvedPosterUrl } from '../utils/globalPosterResolver';
-import { MdPlayArrow, MdLocalFireDepartment } from 'react-icons/md';
+import { MdInfo, MdLocalFireDepartment } from 'react-icons/md';
 import './HeroCarousel.css';
 
 const HeroCarousel = ({ episodes = [] }) => {
@@ -110,7 +110,7 @@ const HeroCarousel = ({ episodes = [] }) => {
                                     <>
                                         <div className="hero-slide-eyebrow" style={{ color: isUpcoming ? '#FFD700' : '#fff' }}>
                                             <MdLocalFireDepartment color={isUpcoming ? '#FFD700' : '#E50914'} size={16} />
-                                            {isUpcoming ? `UPCOMING • ${new Date(displayEp.air_date).toLocaleDateString()}` : 'EPISODE IN AIR'}
+                                            {isUpcoming ? `PREVIEW INFO • ${new Date(displayEp.air_date).toLocaleDateString()}` : 'NEW RELEASE METADATA'}
                                         </div>
 
                                         <h2 className="hero-slide-title">{series.name}</h2>
@@ -128,22 +128,14 @@ const HeroCarousel = ({ episodes = [] }) => {
                                 className="hero-view-btn"
                                 onClick={() => navigate(`/tv/${series.id}`)}
                             >
-                                <MdPlayArrow size={18} /> View Series
+                                <MdInfo size={18} /> View Info
                             </button>
                         </div>
                     </div>
                 ))}
             </div>
 
-            {/* Indicators */}
-            <div className="hero-indicators">
-                {episodes.map((_, idx) => (
-                    <div
-                        key={idx}
-                        className={`indicator-dot ${currentIndex === idx ? 'active' : ''}`}
-                    />
-                ))}
-            </div>
+
         </div>
     );
 };

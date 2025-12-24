@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-
 import Login from './pages/Login';
 import Home from './pages/Home';
 import Watchlist from './pages/Watchlist';
+import WatchlistSeason from './pages/WatchlistSeason';
 import UserReview from './pages/user_review';
 import Profile from './pages/Profile';
 import EditProfile from './pages/EditProfile';
@@ -38,8 +39,6 @@ import ScrollToTop from './components/ScrollToTop';
 import { App as NativeApp } from '@capacitor/app';
 import UpdateManager from './components/UpdateManager';
 import GlobalErrorAutomation from './components/GlobalErrorAutomation';
-import { CapacitorUpdater } from '@capgo/capacitor-updater'; // Import
-
 // Move this inside the App component
 
 import { Capacitor } from '@capacitor/core';
@@ -84,21 +83,7 @@ function App() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Notify Capacitor Updater that the app has launched successfully
-  // We use a small delay to ensuring the Native Bridge is fully ready
-  React.useEffect(() => {
-    const notifyPlugin = async () => {
-      try {
-        // Wait 1s to be safe
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await CapacitorUpdater.notifyAppReady();
-        console.log("✅ OTA: App Ready Notified Successfully");
-      } catch (e) {
-        console.error("❌ OTA: Notification Failed", e);
-      }
-    };
-    notifyPlugin();
-  }, []);
+
 
   // Handle Native Back Button
   React.useEffect(() => {
@@ -154,46 +139,49 @@ function App() {
                   <Maintenance />
                 ) : (
                   <AuthGate>
-                    <Routes>
-                      <Route path="/login" element={<Login />} />
+                    <div className="app-root" id="app-scroll-container">
+                      <Routes>
+                        <Route path="/login" element={<Login />} />
 
-                      {/* Public Routes within Layout */}
-                      <Route element={<Layout />}>
-                        <Route path="/" element={<Home />} />
-                        <Route path="/series-graph" element={<SeriesGraph />} />
-                        <Route path="/friends" element={<Friends />} />
-                        <Route path="/search" element={<Search />} />
-                        <Route path="/movie/:id" element={<MovieDetails />} />
-                        <Route path="/tv/:id" element={<MovieDetails />} />
-                        <Route path="/tv/:id/season/:seasonNumber" element={<MovieDetails />} />
-                        <Route path="/tv/:id/season/:seasonNumber/poster" element={<PosterSelection />} />
-                        <Route path="/tv/:id/season/:seasonNumber/episode/:episodeNumber" element={<EpisodeDetails />} />
-                        <Route path="/person/:id" element={<Biography />} />
+                        {/* Public Routes within Layout */}
+                        <Route element={<Layout />}>
+                          <Route path="/" element={<Home />} />
+                          <Route path="/series-graph" element={<SeriesGraph />} />
+                          <Route path="/friends" element={<Friends />} />
+                          <Route path="/search" element={<Search />} />
+                          <Route path="/movie/:id" element={<MovieDetails />} />
+                          <Route path="/tv/:id" element={<MovieDetails />} />
+                          <Route path="/tv/:id/season/:seasonNumber" element={<MovieDetails />} />
+                          <Route path="/tv/:id/season/:seasonNumber/poster" element={<PosterSelection />} />
+                          <Route path="/tv/:id/season/:seasonNumber/episode/:episodeNumber" element={<EpisodeDetails />} />
+                          <Route path="/person/:id" element={<Biography />} />
 
-                        <Route path="/tv/:id/reviews" element={<SeriesReviewsPage />} />
-                        <Route path="/tv/:id/season/:seasonNumber/reviews" element={<SeriesReviewsPage />} />
-                        <Route path="/tv/:id/season/:seasonNumber/episode/:episodeNumber/reviews" element={<SeriesReviewsPage />} />
-                        <Route path="/movie/:id/reviews" element={<SeriesReviewsPage />} />
+                          <Route path="/tv/:id/reviews" element={<SeriesReviewsPage />} />
+                          <Route path="/tv/:id/season/:seasonNumber/reviews" element={<SeriesReviewsPage />} />
+                          <Route path="/tv/:id/season/:seasonNumber/episode/:episodeNumber/reviews" element={<SeriesReviewsPage />} />
+                          <Route path="/movie/:id/reviews" element={<SeriesReviewsPage />} />
 
-                        {/* Protected Routes */}
-                        <Route element={<ProtectedRoute />}>
-                          <Route path="/watchlist" element={<Watchlist />} />
-                          <Route path="/reviews" element={<UserReview />} />
-                          <Route path="/profile" element={<Profile />} />
-                          <Route path="/profile/:uid" element={<Profile />} />
-                          <Route path="/edit-profile" element={<EditProfile />} />
-                          <Route path="/settings" element={<Settings />} />
-                          <Route path="/profile/:uid/followers" element={<Followers />} />
-                          <Route path="/profile/:uid/following" element={<Following />} />
-                          <Route path="/profile/:uid/followers" element={<Followers />} />
-                          <Route path="/profile/:uid/following" element={<Following />} />
-                          <Route path="/review/:type/:id" element={<ReviewPage />} />
-                          <Route path="/share-sticker" element={<StickerSharePage />} />
+                          {/* Protected Routes */}
+                          <Route element={<ProtectedRoute />}>
+                            <Route path="/watchlist" element={<Watchlist />} />
+                            <Route path="/watchlist/season/:seriesId/:seasonNumber" element={<WatchlistSeason />} />
+                            <Route path="/reviews" element={<UserReview />} />
+                            <Route path="/profile" element={<Profile />} />
+                            <Route path="/profile/:uid" element={<Profile />} />
+                            <Route path="/edit-profile" element={<EditProfile />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="/profile/:uid/followers" element={<Followers />} />
+                            <Route path="/profile/:uid/following" element={<Following />} />
+                            <Route path="/profile/:uid/followers" element={<Followers />} />
+                            <Route path="/profile/:uid/following" element={<Following />} />
+                            <Route path="/review/:type/:id" element={<ReviewPage />} />
+                            <Route path="/share-sticker" element={<StickerSharePage />} />
+                          </Route>
                         </Route>
-                      </Route>
 
-                      <Route path="*" element={<Navigate to="/" replace />} />
-                    </Routes>
+                        <Route path="*" element={<Navigate to="/" replace />} />
+                      </Routes>
+                    </div>
                   </AuthGate>
                 )}
               </AuthProvider>

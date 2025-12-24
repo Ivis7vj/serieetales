@@ -103,6 +103,7 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted, globalP
                     }}
                 />
 
+
                 {/* SEASON COMPLETION BADGE */}
                 {seasonCompleted && movie.seasonEpisode && (
                     <div style={{
@@ -161,7 +162,7 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted, globalP
                         letterSpacing: '1.5px',
                         fontWeight: '400'
                     }}>
-                        reviewed on
+                        tracked on
                     </p>
                     <div style={{
                         fontSize: '52px',
@@ -234,8 +235,21 @@ const StorySticker = forwardRef(({ movie, rating, user, seasonCompleted, globalP
                     fontWeight: '500',
                     letterSpacing: '0.5px'
                 }}>
-                    {username} watched this
+                    {username} tracked this
                 </span>
+            </div>
+
+            {/* MANDATORY FOOTER */}
+            <div style={{
+                position: 'absolute',
+                bottom: '30px',
+                fontSize: '20px',
+                fontWeight: '700',
+                color: 'rgba(255,255,255,0.3)',
+                letterSpacing: '2px',
+                textTransform: 'uppercase'
+            }}>
+                SERIEE • Tracking & Review App
             </div>
 
             <style>

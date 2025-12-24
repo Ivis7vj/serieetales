@@ -84,7 +84,8 @@ const Home = () => {
 
         stopLoading();
       } catch (error) {
-        triggerErrorAutomation(error);
+        console.error("Home Data Fetch Error:", error);
+        setError("Unable to load latest content. Please check your connection.");
         stopLoading();
       }
     };

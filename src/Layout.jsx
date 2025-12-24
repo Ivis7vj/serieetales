@@ -60,9 +60,9 @@ const Layout = () => {
             )}
 
             <Header onLogout={handleLogout} />
-            <div className="content-wrapper">
+            <div className="content-wrapper" style={{ overflow: 'visible', height: 'auto', display: 'block' }}>
                 <Sidebar activeFooter={activeFooter} setActiveFooter={setActiveFooter} onLogout={handleLogout} />
-                <main className="main-content scrollable-content">
+                <main className="main-content" style={{ overflow: 'visible', height: 'auto' }}>
                     <Outlet />
                 </main>
             </div>

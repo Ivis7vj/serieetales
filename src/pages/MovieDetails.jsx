@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { MdStar, MdStarBorder, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdKeyboardArrowUp, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken, MdCelebration, MdMovie } from 'react-icons/md';
+import { MdStar, MdStarBorder, MdStarHalf, MdAdd, MdRemove, MdCreate, MdFavorite, MdFavoriteBorder, MdVisibility, MdVisibilityOff, MdKeyboardArrowDown, MdKeyboardArrowUp, MdClose, MdShare, MdCheck, MdIosShare, MdRateReview, MdArrowBack, MdPlayArrow, MdEdit, MdSentimentSatisfiedAlt, MdSentimentNeutral, MdSentimentVeryDissatisfied, MdHeartBroken, MdCelebration, MdMovie, MdInfo } from 'react-icons/md';
 import { FaArrowLeft } from 'react-icons/fa';
 import ReviewModal from '../components/ReviewModal';
 import PosterUnlockPopup from '../components/PosterUnlockPopup';
@@ -82,7 +83,7 @@ const MovieDetails = () => {
 
         // GSAP Animation
         const targetRef = wasLiked ? brokenHeartRef : heartRef;
-        const scaleVal = 1.0; // "Medium Small" (Reduced from 2.5)
+        const scaleVal = 2.5; // ROLLOBCK: Restored to original impactful size
 
         if (targetRef.current) {
             const tl = gsap.timeline();
@@ -126,8 +127,10 @@ const MovieDetails = () => {
     const [showEditHint, setShowEditHint] = useState(false);
     const [isEditButtonGlowing, setIsEditButtonGlowing] = useState(false);
 
-    // Custom Season Dropdown State
-    const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
+    // Custom Season & Episode Popup State
+    const [isSeasonPopupOpen, setIsSeasonPopupOpen] = useState(false);
+    const [isEpisodePopupOpen, setIsEpisodePopupOpen] = useState(false);
+    const [selectedEpisodeData, setSelectedEpisodeData] = useState(null);
 
     // Selected Season (must be declared before useEffect that uses it)
     const [selectedSeason, setSelectedSeason] = useState(seasonNumber ? parseInt(seasonNumber) : 1);
@@ -206,7 +209,17 @@ const MovieDetails = () => {
     const [isSeasonOpen, setIsSeasonOpen] = useState(false);
 
     // Global Scroll Lock for inline popups
-    useScrollLock(showSeasonCompletion || limitPopupVisible || isSeasonOpen);
+    useScrollLock(showSeasonCompletion || limitPopupVisible || isEpisodePopupOpen);
+
+    // AUTO-CLOSE SEASON COMPLETION AFTER 3 SECONDS
+    useEffect(() => {
+        if (showSeasonCompletion) {
+            const timer = setTimeout(() => {
+                handleSeasonCompletionClose();
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [showSeasonCompletion]);
 
     // Fetch Watched Status from Supabase (SSOT)
     useEffect(() => {
@@ -463,7 +476,7 @@ const MovieDetails = () => {
                 });
             }
         } catch (error) {
-            triggerErrorAutomation(error);
+            console.error("Season completion error:", error);
         }
     };
 
@@ -584,7 +597,8 @@ const MovieDetails = () => {
     };
 
     useEffect(() => {
-        const fetchData = async () => {
+        const fetchSeriesData = async () => {
+            if (!id) return;
             setIsLoading(true);
             setLoading(true);
             try {
@@ -595,25 +609,6 @@ const MovieDetails = () => {
                 const creditsData = data.credits || {};
                 const providersData = data['watch/providers'] || {};
                 const externalIdsData = data.external_ids || {};
-                const videosData = data.videos || {};
-
-                // Fetch OMDb Ratings if IMDb ID exists
-                if (externalIdsData.imdb_id) {
-                    try {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
-
-                        const omdbRes = await fetch(`https://www.omdbapi.com/?i=${externalIdsData.imdb_id}&apikey=15529774`, {
-                            signal: controller.signal
-                        });
-                        clearTimeout(timeoutId);
-
-                        const omdbData = await omdbRes.json();
-                        // Ratings state removed
-                    } catch (e) {
-                        console.warn("OMDb Fetch Error (Skipped):", e.name === 'AbortError' ? 'Timeout' : e.message);
-                    }
-                }
 
                 // Set Watch Providers (Prioritize IN, then US)
                 setWatchProviders(providersData.results?.IN || providersData.results?.US || null);
@@ -625,48 +620,38 @@ const MovieDetails = () => {
                 const creators = detailsData.created_by || [];
                 setCrew(creators);
 
-                if (videosData?.results) {
-                    const trailerVideo = videosData.results.find(vid => vid.type === 'Trailer' && vid.site === 'YouTube');
-                    // Trailer implementation removed for stability
-                }
-
-                if (data.images && data.images.logos) {
-                    // Find the best logo (English, PNG)
-                    const logos = data.images.logos;
-                    const bestLogo = logos.find(l => l.iso_639_1 === 'en') || logos[0];
-                    // Logic moved to derived variable getEnglishLogo
-                }
-
-                setCrew(creators);
-
-                // Fetch Reviews from Firestore - Handled by Real-time Listener now
-                // setReviewsData(firestoreReviews);
-
-
                 if (detailsData.seasons) {
                     setSeasonsValues(detailsData.seasons.filter(s => s.season_number > 0)); // Skip Specials (S0) usually
                 }
 
                 checkUser(detailsData.id);
-                // Don't set loading false yet if we want to wait for episodes, but for perceived perf, maybe separate?
-                // Let's just fetch season 1 default immediately if exists
-                if (detailsData.seasons && detailsData.seasons.length > 0) {
-                    const seasonToFetch = seasonNumber ? parseInt(seasonNumber) : 1;
-                    setSelectedSeason(seasonToFetch); // Ensure state sync
-                    fetchSeasonEpisodes(detailsData.id, seasonToFetch, detailsData.name);
-                } else {
-                    setLoading(false);
-                    stopLoading();
-                }
             } catch (error) {
-                triggerErrorAutomation(error);
+                console.error("Series Data Fetch Error:", error);
                 setLoading(false);
                 stopLoading();
             }
         };
 
-        fetchData();
-    }, [id, fetchSeasonEpisodes, seasonNumber]);
+        fetchSeriesData();
+    }, [id]);
+
+    useEffect(() => {
+        const fetchSeasonData = async () => {
+            if (!id || !details) return;
+
+            // If we have seasons, fetch the selected one
+            if (details.seasons && details.seasons.length > 0) {
+                const seasonToFetch = seasonNumber ? parseInt(seasonNumber) : 1;
+                setSelectedSeason(seasonToFetch); // Ensure state sync
+                fetchSeasonEpisodes(id, seasonToFetch, details.name);
+            } else {
+                setLoading(false);
+                stopLoading();
+            }
+        };
+
+        fetchSeasonData();
+    }, [id, seasonNumber, details?.id, fetchSeasonEpisodes]);
 
 
 
@@ -687,10 +672,9 @@ const MovieDetails = () => {
         return true;
     };
 
-    const handleSeasonChange = (e) => {
-        const newSeason = parseInt(e.target.value);
-        setSelectedSeason(newSeason);
-        fetchSeasonEpisodes(id, newSeason);
+    const handleSeasonChange = (newSeason) => {
+        setIsSeasonPopupOpen(false);
+        navigate(`/tv/${id}/season/${newSeason}`);
     };
 
     // Sync User State from Firestore & Supabase
@@ -839,7 +823,7 @@ const MovieDetails = () => {
                 logActivity(userData || currentUser, 'watchlist', {
                     seriesId: details.id, // FIX: id -> seriesId
                     seriesName: details.name, // EXTRACTED
-                    posterPath: details.poster_path, // FIX: poster_path -> posterPath
+                    posterPath: seasonDetails?.poster_path || details.poster_path, // FIX: Use Season Poster
                     seasonNumber: selectedSeason
                 });
             }
@@ -982,7 +966,7 @@ const MovieDetails = () => {
                     seriesName: details.name,
                     seasonNumber: episode.season_number,
                     episodeNumber: episode.episode_number,
-                    posterPath: details.poster_path // Series poster for episodes usually
+                    posterPath: seasonDetails?.poster_path || details.poster_path // Use Season Poster if available
                 });
 
                 // MANUAL COMPLETION CHECK (New)
@@ -1332,7 +1316,7 @@ const MovieDetails = () => {
                         seasonNumber: reviewingItem.seasonNumber,
                         episodeNumber: reviewingItem.episodeNumber,
                         rating: parseFloat(rating),
-                        posterPath: details.poster_path // Series Poster
+                        posterPath: seasonDetails?.poster_path || details.poster_path // Use Season Poster
                     });
                 } else if (isSeason) {
                     console.log("📝 Creating Season Review via Supabase...");
@@ -1812,7 +1796,7 @@ const MovieDetails = () => {
     };
     */
 
-    if (loading && !details) return null; // Wait for data or global loader
+    if (loading) return null; // STRICT: Wait for ALL data (Series + Season)
     if (!details) return <div className="loading" style={{ color: '#FFD600', textAlign: 'center', marginTop: '100px' }}>Series not found</div>;
 
 
@@ -1933,8 +1917,7 @@ const MovieDetails = () => {
                 {/* POSTER (Refined: Card Style) */}
                 <div className="poster-wrapper" style={{ flexShrink: 0, zIndex: 3, marginBottom: '2rem' }}>
                     <div
-                        onClick={handlePosterClick}
-                        style={{ position: 'relative', filter: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}
+                        style={{ position: 'relative', filter: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'default' }}
                     >
                         {/* Watchlist Button Overlay */}
 
@@ -1943,27 +1926,6 @@ const MovieDetails = () => {
 
 
                         {/* Animated Heart */}
-                        <div style={{
-                            position: 'absolute',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            zIndex: 10,
-                            pointerEvents: 'none' // Click through
-                        }}>
-                            <MdFavorite
-                                ref={heartRef}
-                                size={120}
-                                color="#FF0000"
-                                style={{ opacity: 0, position: 'absolute', transform: 'translate(-50%, -50%)' }}
-                            />
-                            <MdHeartBroken
-                                ref={brokenHeartRef}
-                                size={120}
-                                color="#FFFFFF"
-                                style={{ opacity: 0, position: 'absolute', transform: 'translate(-50%, -50%)' }}
-                            />
-                        </div>
 
 
                         {/* POSTER CONTAINER REF */}
@@ -2027,15 +1989,38 @@ const MovieDetails = () => {
                                         )}
                                     </div>
 
-                                    {/* Like Tip (On Poster) */}
-                                    <MobileIndicator
-                                        id="like-tip"
-                                        message="Mark as favourite ❤️"
-                                        position="bottom"
-                                        style={{ bottom: '20px' }}
-                                    />
+                                    {/* Double Tap to Like Indicator (Attached to Poster) */}
+                                    {/* Double Tap to Like Indicator REMOVED */}
                                 </>
                             )}
+
+                            {/* ROUNDED LIKE BUTTON (Bottom Right) */}
+                            <div
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    toggleLike();
+                                }}
+                                style={{
+                                    position: 'absolute',
+                                    bottom: '10px',
+                                    right: '10px',
+                                    width: '40px',
+                                    height: '40px',
+                                    borderRadius: '50%',
+                                    background: 'rgba(0,0,0,0.6)',
+                                    backdropFilter: 'blur(4px)',
+                                    border: '1px solid rgba(255,255,255,0.3)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    zIndex: 10,
+                                    boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
+                                }}
+                            >
+                                {isLiked ? <MdFavorite size={20} color="#FF0000" /> : <MdFavoriteBorder size={20} color="#fff" />}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2058,9 +2043,9 @@ const MovieDetails = () => {
                             {title}
                         </h1>
 
-                        {/* Where to Watch (Inline) */}
+                        {/* Availability Info (Inline) */}
                         <div style={{ display: 'flex', gap: '10px', marginTop: '8px', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666', textTransform: 'uppercase' }}>Available on:</span>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666', textTransform: 'uppercase' }}>Availability Status:</span>
                             {watchProviders?.flatrate || watchProviders?.rent || watchProviders?.buy ? (
                                 (watchProviders.flatrate || watchProviders.rent || watchProviders.buy || []).slice(0, 3).map(provider => (
                                     <div key={provider.provider_id} title={provider.provider_name}>
@@ -2138,7 +2123,7 @@ const MovieDetails = () => {
                     ) : (
                         inWatchlist ? <MdCheck size={28} color="#fff" /> : <MdAdd size={28} color="#fff" />
                     )}
-                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: '#ccc' }}>My List</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: '#ccc' }}>Tracking</span>
                 </div>
 
                 {/* RATE (Review) */}
@@ -2226,7 +2211,7 @@ const MovieDetails = () => {
                     ) : (
                         isWatched ? <MdVisibility size={28} color="#46d369" /> : <MdVisibilityOff size={28} color="#fff" />
                     )}
-                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: isWatched ? '#46d369' : '#ccc' }}>Watched</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: '500', color: isWatched ? '#46d369' : '#ccc' }}>Tracked</span>
                 </div>
 
             </div>
@@ -2242,7 +2227,7 @@ const MovieDetails = () => {
                     WebkitBoxOrient: 'vertical',
                     overflow: 'hidden'
                 }}>
-                    {seasonDetails?.overview || details.overview || "No overview available."}
+                    {seasonDetails?.overview || details.overview || "No information available."}
                 </p>
             </div>
 
@@ -2275,100 +2260,73 @@ const MovieDetails = () => {
                                         )
                                     */}
 
-                                {/* Season Swipeable List (Custom Animated Dropdown - Premium Black) */}
+                                {/* Season Selection Dropdown (Rolled back to Dropdown) */}
                                 <div style={{
-                                    width: '100%',
-                                    padding: '0 5px',
-                                    marginBottom: '10px',
-                                    position: 'relative', // For absolute dropdown
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'flex-start' // Align left
+                                    position: 'relative',
+                                    zIndex: 1000
                                 }}>
                                     {/* TRIGGER BUTTON */}
                                     <div
-                                        onClick={() => setIsSeasonDropdownOpen(!isSeasonDropdownOpen)}
+                                        onClick={() => setIsSeasonPopupOpen(!isSeasonPopupOpen)}
                                         style={{
-                                            backgroundColor: '#1a1a1a', // Slightly lighter than #000 for button
+                                            backgroundColor: '#1a1a1a',
                                             color: '#fff',
                                             border: '1px solid #333',
-                                            borderRadius: '4px', // Standard radius
-                                            padding: '8px 12px', // Medium Small Padding
-                                            fontSize: '0.95rem', // Medium Small Font
-                                            fontWeight: '700', // Bold
-                                            fontFamily: 'Inter, sans-serif',
-                                            width: 'auto', // Auto width to fit content
-                                            minWidth: '150px', // Min width for consistency
-                                            maxWidth: '250px', // Max width constraint
+                                            borderRadius: '4px',
+                                            padding: '8px 12px',
+                                            fontSize: '0.9rem',
+                                            fontWeight: '700',
+                                            minWidth: '130px',
                                             cursor: 'pointer',
                                             display: 'flex',
                                             justifyContent: 'space-between',
                                             alignItems: 'center',
-                                            textTransform: 'uppercase', // "SEASON 1"
-                                            userSelect: 'none',
-                                            transition: 'all 0.2s ease',
+                                            textTransform: 'uppercase',
                                         }}
                                     >
-                                        <span style={{ marginRight: '15px', whiteSpace: 'nowrap' }}>Season {selectedSeason}</span>
-                                        {isSeasonDropdownOpen ? <MdKeyboardArrowUp size={18} /> : <MdKeyboardArrowDown size={18} />}
+                                        <span style={{ marginRight: '10px' }}>Season {selectedSeason}</span>
+                                        <MdKeyboardArrowDown size={18} />
                                     </div>
 
                                     {/* DROPDOWN MENU */}
-                                    <div style={{
-                                        position: 'absolute',
-                                        top: '100%',
-                                        left: '5px', // Align with trigger padding
-                                        width: 'auto', // Auto width
-                                        minWidth: '150px', // Match trigger min
-                                        maxWidth: '250px', // Match trigger max
-                                        backgroundColor: '#000', // Pure Black
-                                        border: isSeasonDropdownOpen ? '1px solid #333' : 'none',
-                                        borderRadius: '4px',
-                                        marginTop: '5px',
-                                        overflow: 'hidden',
-                                        maxHeight: isSeasonDropdownOpen ? '300px' : '0px', // ANIMATION: Height
-                                        opacity: isSeasonDropdownOpen ? 1 : 0,
-                                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', // SMOOTH ANIMATION
-                                        zIndex: 100,
-                                        boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
-                                    }}>
-                                        {seasonsValues.sort((a, b) => a.season_number - b.season_number).map(s => (
-                                            <div
-                                                key={s.id}
-                                                onClick={() => {
-                                                    handleSeasonChange({ target: { value: s.season_number } });
-                                                    setIsSeasonDropdownOpen(false);
-                                                }}
-                                                style={{
-                                                    background: selectedSeason === s.season_number ? '#222' : 'transparent',
-                                                    color: selectedSeason === s.season_number ? '#fff' : '#aaa',
-                                                    padding: '8px 12px', // Compact Item Padding
-                                                    fontSize: '0.9rem', // Compact Item Font
-                                                    fontWeight: '600',
-                                                    fontFamily: 'Inter, sans-serif',
-                                                    cursor: 'pointer',
-                                                    textTransform: 'uppercase',
-                                                    borderBottom: '1px solid #111',
-                                                    transition: 'background 0.2s',
-                                                    whiteSpace: 'nowrap'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    if (selectedSeason !== s.season_number) {
-                                                        e.currentTarget.style.background = '#111';
-                                                        e.currentTarget.style.color = '#fff';
-                                                    }
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    if (selectedSeason !== s.season_number) {
-                                                        e.currentTarget.style.background = 'transparent';
-                                                        e.currentTarget.style.color = '#aaa';
-                                                    }
-                                                }}
-                                            >
-                                                {s.name || `Season ${s.season_number}`}
-                                            </div>
-                                        ))}
-                                    </div>
+                                    {isSeasonPopupOpen && (
+                                        <div
+                                            className="hide-scrollbar"
+                                            style={{
+                                                position: 'absolute',
+                                                top: '110%',
+                                                right: 0,
+                                                width: '100%',
+                                                minWidth: '150px',
+                                                maxHeight: '200px',
+                                                background: '#1a1a1a',
+                                                border: '1px solid #333',
+                                                borderRadius: '6px',
+                                                overflowY: 'auto',
+                                                boxShadow: '0 10px 40px rgba(0,0,0,0.8)',
+                                                zIndex: 1001
+                                            }}
+                                        >
+                                            {seasonsValues.sort((a, b) => a.season_number - b.season_number).map((s) => (
+                                                <div
+                                                    key={s.id}
+                                                    onClick={() => handleSeasonChange(s.season_number)}
+                                                    style={{
+                                                        padding: '12px 15px',
+                                                        fontSize: '0.9rem',
+                                                        color: selectedSeason === s.season_number ? '#FFD600' : '#fff',
+                                                        background: selectedSeason === s.season_number ? 'rgba(255, 214, 0, 0.1)' : 'transparent',
+                                                        borderBottom: '1px solid #222',
+                                                        fontWeight: '600',
+                                                        textAlign: 'center',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    {s.name || `Season ${s.season_number}`}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -2390,7 +2348,10 @@ const MovieDetails = () => {
                             return (
                                 <div
                                     key={ep.id}
-                                    onClick={() => navigate(`/tv/${id}/season/${selectedSeason}/episode/${ep.episode_number}`)}
+                                    onClick={() => {
+                                        setSelectedEpisodeData(ep);
+                                        setIsEpisodePopupOpen(true);
+                                    }}
                                     style={{
                                         display: 'flex',
                                         flexDirection: 'column',
@@ -2616,55 +2577,80 @@ const MovieDetails = () => {
 
 
             {/* SEASON COMPLETION OVERLAY */}
+            {/* SEASON COMPLETION OVERLAY (Portal to Body for Viewport Positioning) */}
             {
-                showSeasonCompletion && (
+                showSeasonCompletion && createPortal(
                     <div
-                        className="modal-overlay popup-overlay"
-                        style={{ pointerEvents: 'auto' }} // Ensure overlay handles clicks if needed (but we block them below)
+                        className="season-complete-overlay"
+                        style={{
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            width: '100vw', // Explicit Viewport Width
+                            height: '100vh', // Explicit Viewport Height
+                            height: '100dvh', // Modern Mobile Height
+                            background: 'rgba(0, 0, 0, 0.65)', // Slightly darker
+                            backdropFilter: 'blur(12px)', // Stronger blur
+                            zIndex: 10000, // Very high z-index
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            animation: 'fadeIn 0.5s ease-out',
+                            touchAction: 'none' // Disable touch interactions on backdrop
+                        }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                        }}
                     >
-                        <div
-                            className="modal-content"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                                background: '#000000',
-                                border: '1px solid #333',
-                                borderRadius: '16px',
-                                padding: '40px 30px',
-                                width: '85%',
-                                maxWidth: '320px',
-                                textAlign: 'center',
-                                boxShadow: '0 20px 60px rgba(0,0,0,0.9)',
-                            }}
-                        >
-                            <MdCelebration style={{ fontSize: '3rem', marginBottom: '15px', color: '#FFD600' }} />
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#fff', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                Season Completed
-                            </h2>
-                            <p style={{ fontSize: '1rem', color: '#ccc', lineHeight: '1.5', marginBottom: '25px' }}>
-                                You unlocked poster customization
-                            </p>
-                            <button
-                                onClick={handleSeasonCompletionClose}
+                        <div style={{
+                            background: '#000000',
+                            padding: '30px 20px',
+                            borderRadius: '12px',
+                            border: '1px solid #222',
+                            boxShadow: '0 10px 40px rgba(0,0,0,0.8)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            animation: 'popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                            width: '260px',
+                            maxWidth: '85%',
+                            textAlign: 'center'
+                        }}>
+                            <MdCelebration
                                 style={{
-                                    background: '#fff',
-                                    color: '#000',
-                                    border: 'none',
-                                    borderRadius: '8px',
-                                    padding: '12px 0',
-                                    fontSize: '1rem',
-                                    fontWeight: 'bold',
-                                    cursor: 'pointer',
-                                    width: '100%',
-                                    textTransform: 'uppercase',
-                                    transition: 'transform 0.1s'
+                                    fontSize: '3rem',
+                                    marginBottom: '15px',
+                                    color: '#FFD600',
                                 }}
-                                onMouseDown={e => e.currentTarget.style.transform = 'scale(0.96)'}
-                                onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
-                            >
-                                OK
-                            </button>
+                            />
+                            <h1 style={{
+                                fontSize: '1.2rem',
+                                fontWeight: '900',
+                                color: '#fff',
+                                marginBottom: '8px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.5px',
+                                margin: '0 0 8px 0',
+                                lineHeight: '1.2'
+                            }}>
+                                Season<br />Completed
+                            </h1>
+                            <p style={{
+                                fontSize: '0.8rem',
+                                color: '#888',
+                                margin: 0,
+                                fontWeight: '500'
+                            }}>
+                                Unlocking Poster Customization...
+                            </p>
                         </div>
-                    </div>
+                        <style>{`
+                            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                            @keyframes popIn { from { transform: scale(0.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+                        `}</style>
+                    </div>,
+                    document.body
                 )
             }
 
@@ -2717,7 +2703,186 @@ const MovieDetails = () => {
                 )
             }
 
+            {/* Episode Details Popup (Netflix Style) */}
+            {
+                isEpisodePopupOpen && selectedEpisodeData && (
+                    <div
+                        style={{
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 99999,
+                            background: '#000',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            animation: 'fadeIn 0.2s ease-out'
+                        }}
+                        onClick={() => setIsEpisodePopupOpen(false)}
+                    >
+                        <div
+                            style={{
+                                width: '90%',
+                                maxWidth: '500px',
+                                background: '#141414',
+                                borderRadius: '12px',
+                                overflow: 'hidden',
+                                boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
+                                position: 'relative'
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Episode Still */}
+                            <div style={{ width: '100%', height: '220px', position: 'relative' }}>
+                                {selectedEpisodeData.still_path ? (
+                                    <img
+                                        src={`https://image.tmdb.org/t/p/w500${selectedEpisodeData.still_path}`}
+                                        alt={selectedEpisodeData.name}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    />
+                                ) : (
+                                    <div style={{ width: '100%', height: '100%', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <span style={{ color: '#555' }}>No Image</span>
+                                    </div>
+                                )}
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    height: '100px',
+                                    background: 'linear-gradient(to top, #141414, transparent)'
+                                }} />
+
+                                {/* Close Button Inside Popup (Top Right) */}
+                                <button
+                                    onClick={() => setIsEpisodePopupOpen(false)}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '15px',
+                                        right: '15px',
+                                        background: 'rgba(0,0,0,0.5)',
+                                        border: 'none',
+                                        borderRadius: '50%',
+                                        width: '36px',
+                                        height: '36px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        color: '#fff',
+                                        backdropFilter: 'blur(10px)'
+                                    }}
+                                >
+                                    <MdClose size={24} />
+                                </button>
+                            </div>
+
+                            {/* Episode Info */}
+                            <div style={{ padding: '24px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                                    <h3 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0, color: '#fff', maxWidth: '80%' }}>
+                                        {selectedEpisodeData.name}
+                                    </h3>
+                                    <div style={{ color: '#FFD600', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                                        E{selectedEpisodeData.episode_number}
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '15px', marginBottom: '16px', color: '#888', fontSize: '0.9rem' }}>
+                                    <span>{selectedEpisodeData.air_date?.split('-')[0]}</span>
+                                    {selectedEpisodeData.runtime > 0 && <span>{selectedEpisodeData.runtime}m</span>}
+                                    {selectedEpisodeData.vote_average > 0 && (
+                                        <span style={{ color: '#46d369', fontWeight: 'bold' }}>
+                                            {Math.round(selectedEpisodeData.vote_average * 10)}% Match
+                                        </span>
+                                    )}
+                                </div>
+
+                                <p style={{
+                                    color: '#ddd',
+                                    fontSize: '0.95rem',
+                                    lineHeight: '1.6',
+                                    margin: 0,
+                                    maxHeight: '180px',
+                                    overflowY: 'auto',
+                                    paddingRight: '10px'
+                                }} className="hide-scrollbar">
+                                    {selectedEpisodeData.overview || "No overview available for this episode."}
+                                </p>
+
+                                <div style={{ marginTop: '24px', display: 'flex', gap: '12px' }}>
+                                    <button
+                                        onClick={() => navigate(`/tv/${id}/season/${selectedSeason}/episode/${selectedEpisodeData.episode_number}`)}
+                                        style={{
+                                            flex: 1,
+                                            background: '#fff',
+                                            color: '#000',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            padding: '10px',
+                                            fontWeight: 'bold',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px'
+                                        }}
+                                    >
+                                        <MdInfo size={24} /> Full Info
+                                    </button>
+                                    <button
+                                        onClick={() => navigate(`/tv/${id}/season/${selectedSeason}/episode/${selectedEpisodeData.episode_number}/reviews`)}
+                                        style={{
+                                            flex: 1,
+                                            background: 'rgba(255,255,255,0.1)',
+                                            color: '#fff',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            padding: '10px',
+                                            fontWeight: 'bold',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px'
+                                        }}
+                                    >
+                                        <MdRateReview size={20} /> Reviews
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Shared Close Button Below if needed, or stick to the one inside */}
+                        <button
+                            onClick={() => setIsEpisodePopupOpen(false)}
+                            style={{
+                                marginTop: '30px',
+                                background: '#fff',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '56px',
+                                height: '56px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                zIndex: 100000
+                            }}
+                        >
+                            <MdClose size={28} color="#000" />
+                        </button>
+                    </div>
+                )
+            }
+
             {/* Poster Unlock Popup */}
+
             <PosterUnlockPopup
                 isOpen={showPosterUnlockPopup}
                 onClose={handlePopupClose}

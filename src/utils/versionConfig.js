@@ -4,7 +4,7 @@ import { fetchAndActivate, getString } from "firebase/remote-config";
 import { remoteConfig } from "../firebase-config";
 
 // THIS APP'S VERSION (Hardcoded because it's baked into the APK)
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.1.2';
 
 // Key to store in localStorage to track if update was seen
 export const STORAGE_KEY_VERSION = 'app_version_code';

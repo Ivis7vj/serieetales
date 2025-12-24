@@ -40,7 +40,7 @@
 .logo-wrapper {
     display: flex;
     align-items: center;
-    font-family: 'Anton', sans-serif !important;
+    font-family: 'Bebas Neue', sans-serif !important;
     position: relative;
     gap: 0;
     margin: 0;
@@ -58,12 +58,11 @@
 
 .logo-s {
     font-size: 110px;
-    color: #FFD400;
-    /* Official Yellow */
+    color: #FFCC00;
+    /* Official IMDb Yellow */
     font-weight: 400;
     line-height: 0.8;
     display: block;
-    transform: scaleY(1.1);
 }
 
 .eriee-container {
@@ -79,10 +78,9 @@
     color: #ffffff;
     font-weight: 400;
     line-height: 0.8;
-    letter-spacing: -5px;
+    letter-spacing: -1px;
     /* Tight IMDb look */
     display: block;
-    transform: scaleY(1.1);
 }
 
 /* Search Bar Reveal Styles - FLEX BASED */

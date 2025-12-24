@@ -50,7 +50,7 @@ const Sidebar = () => {
                 >
                     <MdInsertChart size={28} />
                     <span className="sidebar-text">Series Graph</span>
-                    <MobileIndicator id="nav-stats-tip" message="Your watch insights 📊" position="top" />
+                    <MobileIndicator id="nav-stats-tip" message="Your tracking insights 📊" position="top" />
                 </NavLink>
 
                 <NavLink
@@ -62,14 +62,7 @@ const Sidebar = () => {
                     <span className="sidebar-text">Reviews</span>
                     <MobileIndicator id="nav-reviews-tip" message="Your reviews live here ✍️" position="top" />
                 </NavLink>
-                <NavLink
-                    to="/watchlist"
-                    className={({ isActive }) => `sidebar-link watchlist-link ${isActive ? 'active' : ''}`}
-                    style={({ isActive }) => ({ color: isActive ? 'var(--accent-color)' : 'var(--text-muted)', textDecoration: 'none' })}
-                >
-                    <MdAdd size={28} />
-                    <span className="sidebar-text">Watchlist</span>
-                </NavLink>
+
                 <NavLink
                     to="/profile"
                     className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}

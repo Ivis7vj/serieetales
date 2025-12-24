@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { MdStarBorder, MdRemoveCircleOutline, MdClose } from 'react-icons/md';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLoading } from '../context/LoadingContext';
 import { db } from '../firebase-config';
@@ -12,7 +12,7 @@ import '../pages/Home.css'; // Ensure CSS is loaded
 const Watchlist = () => {
     const { currentUser } = useAuth();
     const [watchlist, setWatchlist] = useState([]);
-    const [basketData, setBasketData] = useState(null); // Replaces viewingSeriesId
+    const navigate = useNavigate();
     const { stopLoading } = useLoading();
 
     useEffect(() => {
@@ -100,19 +100,12 @@ const Watchlist = () => {
         try {
             await watchlistService.removeFromWatchlist(currentUser.uid, id);
         } catch (error) { console.error(error); }
-
-        // Close modal if item removed was inside
-        if (basketData && basketData.episodes.some(i => (i.id || i.tmdb_id) === id)) {
-            const newBasketEps = basketData.episodes.filter(i => (i.id || i.tmdb_id) !== id);
-            if (newBasketEps.length === 0) setBasketData(null);
-            else setBasketData({ ...basketData, episodes: newBasketEps });
-        }
     };
 
     const items = processWatchlist(watchlist);
 
     return (
-        <div className="section" style={{ padding: '20px' }}>
+        <div className="section" style={{ padding: '20px', paddingBottom: '80px', minHeight: '100vh', overflowY: 'auto' }}>
             <h2 className="section-title">Your Watchlist <span style={{ fontSize: '1rem', color: '#666', fontWeight: 'normal' }}>({watchlist.length} items)</span></h2>
 
             {watchlist.length === 0 ? (
@@ -125,26 +118,40 @@ const Watchlist = () => {
                     {items.map((item, idx) => (
                         <div key={idx} style={{ position: 'relative' }}>
                             {item.type === 'basket' ? (
-                                <div onClick={() => setBasketData(item)} style={{ cursor: 'pointer', display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative' }}>
-                                    <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <div
+                                    onClick={() => navigate(`/watchlist/season/${item.seriesId}/${item.seasonNumber}`)}
+                                    style={{ cursor: 'pointer', display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative' }}
+                                >
+                                    <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} />
+                                    {/* Season Indicator for Bucket */}
                                     <div style={{
                                         position: 'absolute', bottom: '10px', right: '10px',
                                         background: '#FFCC00', color: '#000',
                                         padding: '4px 8px', borderRadius: '4px',
-                                        fontWeight: 'bold', fontSize: '0.8rem'
+                                        fontWeight: 'bold', fontSize: '0.8rem',
+                                        zIndex: 2
+                                    }}>
+                                        S{item.seasonNumber}
+                                    </div>
+                                    <div style={{
+                                        position: 'absolute', top: '10px', left: '10px',
+                                        background: 'rgba(0,0,0,0.6)', color: '#fff',
+                                        padding: '2px 6px', borderRadius: '4px',
+                                        fontSize: '0.7rem', backdropFilter: 'blur(4px)'
                                     }}>
                                         {item.episodeCount} EPS
                                     </div>
                                 </div>
                             ) : (
                                 <Link to={item.seasonNumber ? `/tv/${item.tmdbId}/season/${item.seasonNumber}` : `/tv/${item.tmdbId}`} style={{ display: 'block', border: 'none', aspectRatio: '2/3', position: 'relative' }}>
-                                    <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px' }} />
                                     {item.seasonNumber && !item.episodeNumber && (
                                         <div style={{
                                             position: 'absolute', bottom: '10px', right: '10px',
-                                            background: 'rgba(0,0,0,0.8)', color: '#fff',
+                                            background: '#FFCC00', color: '#000', // Changed to match design request (Season Indicator)
                                             padding: '4px 8px', borderRadius: '4px',
-                                            fontWeight: 'bold', fontSize: '0.8rem'
+                                            fontWeight: 'bold', fontSize: '0.8rem',
+                                            zIndex: 2
                                         }}>
                                             S{item.seasonNumber}
                                         </div>
@@ -156,43 +163,10 @@ const Watchlist = () => {
                 </div>
             )}
 
-            {/* Basket Modal/Overlay for Episodes */}
-            {basketData && (
-                <div className="basket-modal-overlay" style={{
-                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-                    background: 'rgba(0,0,0,0.9)', zIndex: 1000,
-                    display: 'flex', justifyContent: 'center', alignItems: 'center'
-                }}>
-                    <div className="basket-content" style={{
-                        width: '90%', maxWidth: '800px', maxHeight: '80vh',
-                        background: '#111', overflowY: 'auto', padding: '20px',
-                        borderRadius: '8px', border: '1px solid #333'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                            <h2 style={{ margin: 0, color: '#fff' }}>{basketData.name}</h2>
-                            <button onClick={() => setBasketData(null)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}><MdClose size={24} /></button>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '20px' }}>
-                            {basketData.episodes.map(ep => (
-                                <div key={ep.id} style={{ position: 'relative' }}>
-                                    <Link to={`/tv/${ep.seriesId}/season/${ep.seasonNumber}/episode/${ep.episodeNumber}`}>
-                                        <img src={`https://image.tmdb.org/t/p/w300${ep.still_path || ep.poster_path}`} style={{ width: '100%', borderRadius: '4px' }} />
-                                    </Link>
-                                    <button onClick={(e) => removeFromWatchlist(e, ep.id)} style={{ position: 'absolute', top: 5, right: 5, background: 'rgba(0,0,0,0.7)', color: 'red', border: 'none', borderRadius: '50%', cursor: 'pointer', padding: '4px' }}>
-                                        <MdRemoveCircleOutline />
-                                    </button>
-                                    <div style={{ marginTop: '5px', fontSize: '0.8rem', color: '#ccc' }}>
-                                        S{ep.seasonNumber} E{ep.episodeNumber}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* Basket Drawer (Restored & Fixed) */}
+
         </div>
     );
 };
 
 export default Watchlist;
-
